@@ -55,3 +55,7 @@ jobs:
           pip install --group docs
       - name: Build HTML docs
         run: sphinx-build -b html -W -n docs docs/_build/html
+      - name: Execute tutorial notebooks (guard against stale/broken output)
+        # Docs render the committed (already-executed) notebooks, so re-run them here to
+        # catch a tutorial that no longer runs against the current API.
+        run: jupyter nbconvert --to notebook --execute --stdout docs/tutorials/*.ipynb > /dev/null

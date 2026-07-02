@@ -46,6 +46,7 @@ docs = [
   "ipykernel",
   "ipython",
   "myst-nb>=1.1",
+  "nbconvert",
   "pandas",
   "sphinx>=8.1",
   "sphinx-autobuild>=2025.8.25",

@@ -108,8 +108,13 @@ html_title = project
 
 html_theme_options = {
     "repository_url": repository_url,
+    "repository_branch": "main",
     "use_repository_button": True,
+    "use_download_button": True,
     "path_to_docs": "docs/",
+    # Tutorials are committed as executed .ipynb (outputs saved), so a launch button makes the
+    # runnable notebook downloadable and gives a valid "Open in Colab" link.
+    "launch_buttons": {"colab_url": "https://colab.research.google.com"},
     "navigation_with_keys": False,
     "show_navbar_depth": 1,
 }
