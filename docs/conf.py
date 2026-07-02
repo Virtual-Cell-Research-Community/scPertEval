@@ -76,7 +76,11 @@ myst_enable_extensions = [
 ]
 myst_url_schemes = ("http", "https", "mailto")
 nb_output_stderr = "remove"
-nb_execution_mode = "off"
+# Execute notebooks at build time, caching results so a page only re-runs when its source
+# changes. Tutorials generate a tiny synthetic dataset inline, so this stays fast and needs
+# no network or external data.
+nb_execution_mode = "cache"
+nb_execution_timeout = 120
 nb_merge_streams = True
 typehints_defaults = "braces"
 always_use_bars_union = True
