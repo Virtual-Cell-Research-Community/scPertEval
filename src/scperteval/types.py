@@ -135,10 +135,10 @@ class Protocol:
     better: str = "higher"
     #: Score a flawless prediction attains (e.g. 1.0 for correlations, 0.0 for errors).
     perfect: float = 1.0
-    #: Positive control source name (default ``"auto"``, deferring to the protocol).
-    positive: str = "auto"
-    #: Negative control source name (default ``"auto"``, deferring to the protocol).
-    negative: str = "auto"
+    #: Declared default positive control; ``None`` uses the representation's generic default.
+    default_positive: str | None = None
+    #: Declared default negative control; ``None`` uses the representation's generic default.
+    default_negative: str | None = None
     #: Display group for ``scperteval list protocols`` (e.g. ``"pseudobulk"``).
     group: str = ""
     #: If set, makes the protocol tunable from the CLI; ``None`` for fixed protocols.

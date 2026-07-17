@@ -22,41 +22,54 @@ degs_padj = Param("padj", float, 0.05, space=degs_space)  # DEGs at adjusted p <
 overlap_k = Param("k", int, 50)  # passed straight to de_overlap's k
 
 
-# --- shared wiring bundles (controls + score scale), splatted into rows with ** ---
-_PB: dict[str, Any] = dict(group="pseudobulk", positive="interpolated", negative="all_perturbed_mean")
-_PB_CTRL: dict[str, Any] = dict(group="pseudobulk", positive="interpolated", negative="control")
+# --- shared wiring bundles (score scale + declared control deviations), splatted with ** ---
+# Controls are resolved at runtime from generic-by-representation defaults (see runner.GENERIC_CONTROLS);
+# only rows that deviate declare a default_positive/default_negative below.
+_PB: dict[str, Any] = dict(group="pseudobulk")
 _LOWER: dict[str, Any] = dict(better="lower", perfect=0.0)
-_DIST: dict[str, Any] = dict(
-    group="distributional", positive="tech_dup", negative="all_perturbed", better="lower", perfect=0.0
-)
+_DIST: dict[str, Any] = dict(group="distributional", better="lower", perfect=0.0)
 _DE: dict[str, Any] = dict(
     group="de",
-    positive="tech_dup",
-    negative="all_perturbed",
     reference="all_perturbed",
     neg_reference="control",
     better="higher",
     perfect=1.0,
 )
-_RANK: dict[str, Any] = dict(
-    group="pseudobulk", positive="interpolated", negative="global_mean", better="lower", perfect=0.0
-)
+# rank retrieval is dataset-scope: the constant global mean is its correct chance-level baseline.
+_RANK: dict[str, Any] = dict(group="pseudobulk", default_negative="global_mean", better="lower", perfect=0.0)
 
 
 TABLE = [
     # --- pseudobulk: correlation & error (positive = interpolated duplicate) ---
     Protocol("pearson", M.pearson, representation="centroid", **_PB),
     Protocol("pearson_ctrl", M.pearson, representation="centroid", centering="ctrl", **_PB),
-    Protocol("pearson_pert", M.pearson, representation="centroid", centering="allpert", **_PB_CTRL),
+    # allpert-centred: all_perturbed_mean would be ~0 after centring, so control is the declared negative.
+    Protocol(
+        "pearson_pert", M.pearson, representation="centroid", centering="allpert", default_negative="control", **_PB
+    ),
     Protocol("mse", M.mse, representation="centroid", **_PB, **_LOWER),
     Protocol("wmse_exp1", partial(M.weighted_mse, exp=1.0), representation="centroid", **_PB, **_LOWER),
     Protocol("wmse_exp2", partial(M.weighted_mse, exp=2.0), representation="centroid", **_PB, **_LOWER),
     Protocol("wmse_exp4", partial(M.weighted_mse, exp=4.0), representation="centroid", **_PB, **_LOWER),
     Protocol("mse_top_k", M.mse, representation="centroid", param=top_k, **_PB, **_LOWER),
     Protocol("mse_degs_padj", M.mse, representation="centroid", param=degs_padj, **_PB, **_LOWER),
-    Protocol("pearson_pert_top_k", M.pearson, representation="centroid", centering="allpert", param=top_k, **_PB_CTRL),
     Protocol(
-        "pearson_pert_degs_padj", M.pearson, representation="centroid", centering="allpert", param=degs_padj, **_PB_CTRL
+        "pearson_pert_top_k",
+        M.pearson,
+        representation="centroid",
+        centering="allpert",
+        param=top_k,
+        default_negative="control",
+        **_PB,
+    ),
+    Protocol(
+        "pearson_pert_degs_padj",
+        M.pearson,
+        representation="centroid",
+        centering="allpert",
+        param=degs_padj,
+        default_negative="control",
+        **_PB,
     ),
     # --- cross-perturbation retrieval rank (dataset-wide over centroids) ---
     Protocol("rank", partial(M.rank_retrieval, transpose=False), representation="centroid", scope="dataset", **_RANK),

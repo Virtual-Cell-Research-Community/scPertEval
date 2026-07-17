@@ -16,12 +16,12 @@ Two files define each protocol:
 
 - **[`src/scperteval/protocols/table.py`](https://github.com/Virtual-Cell-Research-Community/scPertEval/blob/main/src/scperteval/protocols/table.py)** — one row wiring that function
   to its data: the data representation it receives (`representation`), feature space,
-  reference centering, positive/negative controls, which direction is `better`
-  (`"higher"`/`"lower"`), and the `perfect` score:
+  reference centering, which direction is `better` (`"higher"`/`"lower"`), and the `perfect`
+  score. The positive/negative controls are **not** a row field — they are resolved at runtime
+  (see **Control sources** under [Building blocks](#building-blocks--the-palette) below), so the row is just:
 
   ```python
-  Protocol("mse", M.mse, representation="centroid",
-           positive="interpolated", negative="all_perturbed_mean", better="lower", perfect=0.0)
+  Protocol("mse", M.mse, representation="centroid", better="lower", perfect=0.0)
   ```
 
 The next section breaks these arguments down while building one up from scratch.
@@ -52,13 +52,12 @@ Here is a complete new protocol: mean absolute error on the standard pseudobulk 
 2. Add a row to [`src/scperteval/protocols/table.py`](https://github.com/Virtual-Cell-Research-Community/scPertEval/blob/main/src/scperteval/protocols/table.py):
 
    ```python
-   Protocol("mae", M.mae, representation="centroid",
-            positive="interpolated", negative="all_perturbed_mean",
-            better="lower", perfect=0.0)
+   Protocol("mae", M.mae, representation="centroid", better="lower", perfect=0.0)
    ```
 
 Run it with `scperteval calibrate data.h5ad -p mae`. That is the whole protocol: MAE between each
-perturbation's pseudobulk profile and its positive and negative controls, scored as
+perturbation's pseudobulk profile and its positive and negative controls (the centroid
+representation's runtime defaults — `interpolated` and `all_perturbed_mean`), scored as
 lower-is-better toward a perfect of 0.
 
 ### The spec
@@ -72,7 +71,7 @@ That row is the spec; parameters include:
 | `scope` | `"perturbation"` (default) or `"dataset"` — how many perturbations at once (see below) |
 | `space` | which features to score — `full` (default), or a feature space like `top_50` |
 | `centering` | a baseline subtracted before scoring, e.g. `"ctrl"` (default: none) |
-| `positive` / `negative` | the two control sources to compare |
+| `default_positive` / `default_negative` | optional — declare a control default only when the row deviates from the generic default for its representation; omit otherwise (controls are resolved at runtime, see **Control sources** under [Building blocks](#building-blocks--the-palette)) |
 | `better` | `"higher"` or `"lower"` — which direction is an improvement |
 | `perfect` | the value a flawless prediction attains |
 | `param` | optional — a parameter family (`top_k`, `pca_k`, `degs_padj`, `overlap_k`) that makes the protocol tunable from the CLI; omit for a fixed protocol |
@@ -101,7 +100,7 @@ combinations as plain dicts. You then unpack one into a row with `**` (Python's
 keyword-expansion syntax) to avoid retyping it:
 
 ```python
-_PB = dict(group="pseudobulk", positive="interpolated", negative="all_perturbed_mean")
+_PB = dict(group="pseudobulk")
 _LOWER = dict(better="lower", perfect=0.0)
 ```
 
@@ -156,11 +155,21 @@ prediction     (cells) — model-predicted cells for the perturbation, from the 
 tech_dup       (cells) — technical duplicate — the held-out second half (single-cell positive control)
 ```
 
-Each `provides` cells or a pseudobulk `centroid`. Use via `positive=`/`negative=` (or
-`--positive`/`--negative`). The truth source is chosen by the command, not by a protocol:
-`calibrate` uses `gt_half` (holding the other half out as the positive control), while `score`
-uses `gt_all_cells` and compares it to `prediction`. To add another, see
+Each `provides` cells or a pseudobulk `centroid`. The truth source is chosen by the command, not by
+a protocol: `calibrate` uses `gt_half` (holding the other half out as the positive control), while
+`score` uses `gt_all_cells` and compares it to `prediction`. To add another, see
 [Add a control source](building-blocks.md#add-a-control-source).
+
+The positive/negative controls a protocol calibrates against are **resolved at runtime**, in two
+tiers: a **generic default per representation** (`centroid` → `interpolated`/`all_perturbed_mean`;
+`population` and `de` → `tech_dup`/`all_perturbed`), overridden by a protocol's **declared default**
+only where its identity requires it (the allpert-centred `pearson_pert*` rows declare
+`default_negative="control"`, and the dataset-scope `rank`/`transpose_rank` rows declare
+`default_negative="global_mean"`). Either tier is in turn overridable per run with
+`--positive`/`--negative` (`scperteval list protocols` prints each protocol's resolved defaults).
+The controls actually used are recorded per perturbation in the output (`positive`/`negative`
+columns). Overriding a *declared* default emits one warning, since it changes a control coupled to
+the protocol's identity; overriding a merely generic default is silent.
 
 **Calibrators** (the `--calibrator` choice)
 
@@ -218,12 +227,12 @@ def my_mmd(gt, prediction, ctx):      # gt, prediction are (cells × genes)
 
 ```python
 Protocol("my_mmd_top50", M.my_mmd, representation="population", space="top_50",
-         positive="tech_dup", negative="all_perturbed", better="lower", perfect=0.0)
+         better="lower", perfect=0.0)
 ```
 
-This changes two pieces at once — the `representation` (so the function sees cells) and the controls
-(the single-cell positive/negative) — which is the general pattern for a distributional
-protocol.
+Switching `representation` to `population` does two things at once — the function now sees cells,
+*and* the runtime controls follow the representation (the single-cell `tech_dup`/`all_perturbed`
+defaults) — which is the general pattern for a distributional protocol.
 
 By now you've seen every moving part: the function, the spec, the building blocks the spec
 draws on, fixed and parameterised spaces, and switching the representation the function

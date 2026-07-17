@@ -70,6 +70,7 @@ class Context:
         self.ds = dataset
         self.cfg = cfg
         self.predictions: PredictionSet | None = None  # set in prediction-scoring mode
+        self.candidates: dict[str, str] = {}  # the running protocol's resolved controls (set by the runner)
         self._local = threading.local()
         self._store = store if store is not None else CacheStore()
 
@@ -152,7 +153,8 @@ class Context:
         """
         if source == self.cfg.truth:
             return self.de(pert, self.cfg.truth, p.reference)
-        reference = p.neg_reference if (source == p.negative and p.neg_reference) else p.reference
+        is_negative = source == self.candidates.get("negative")
+        reference = p.neg_reference if (is_negative and p.neg_reference) else p.reference
         return np.abs(self.de(pert, source, reference).statistic)
 
     def de(self, pert, source, reference="all_perturbed"):

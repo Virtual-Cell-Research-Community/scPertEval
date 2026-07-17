@@ -47,8 +47,10 @@ def src_my_baseline(ctx, pert):
     return ...                       # a 1-D centroid (or cells, if provides="cells")
 ```
 
-Use it as a control via `positive=`/`negative=` in a row, or `--positive`/`--negative` at
-the CLI.
+Use it as a control at the CLI via `--positive`/`--negative`, or make it a row's default with
+`default_positive=`/`default_negative=` (only where the row deviates from the representation's
+generic default; controls are otherwise resolved at runtime — see
+[Protocols → Control sources](protocols.md)).
 
 ## Add a calibrator
 
