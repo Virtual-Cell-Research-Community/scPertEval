@@ -116,9 +116,11 @@ def src_global_mean(ctx, pert):
 def src_interpolated(ctx, pert):
     """DE-weighted blend toward the held-out replicate, else the all-perturbed mean.
 
-    Alpha = 1 - adjusted p per gene (from the run's DE method, vs control); blend toward
-    the held-out replicate where the gene is significant, else toward the all-perturbed mean.
+    Implements the interpolated duplicate positive control of :cite:p:`Miller_2025`.
+    Alpha = 1 - adjusted p per gene (from the run's DE method, vs all other perturbed cells
+    (leave-one-out)); blend toward the held-out replicate where the gene is significant, else
+    toward the all-perturbed mean.
     """
     tech = np.asarray(to_dense(ctx.ds.cells(pert, half="second"))).mean(0)
-    alpha = np.nan_to_num(1.0 - ctx.de(pert, "tech_dup", "control").pvalue_adj, nan=0.0)
+    alpha = np.nan_to_num(1.0 - ctx.de(pert, "tech_dup", "all_perturbed").pvalue_adj, nan=0.0)
     return alpha * tech + (1.0 - alpha) * ctx.ds.all_perturbed_mean_except(pert)
