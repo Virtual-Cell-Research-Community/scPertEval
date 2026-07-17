@@ -17,6 +17,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal, NamedTuple
 
+import numpy as np
 import pandas as pd
 
 from . import io
@@ -26,9 +27,12 @@ from .dataset import Dataset
 from .predictions import PredictionSet
 from .protocols.resolve import resolve_protocols
 from .runner import compute_de, run_all
-from .types import RunConfig
+from .sources import SOURCES
+from .types import Protocol, RunConfig
 
 if TYPE_CHECKING:  # annotation-only; keeps ``import scperteval`` from eagerly importing anndata
+    from collections.abc import Callable
+
     from anndata import AnnData
 
 __all__ = [
@@ -99,16 +103,23 @@ class Prepared:
     internals are not part of the public API.
     """
 
-    __slots__ = ("_cfg", "_ds", "_store")
+    __slots__ = ("_cfg", "_ds", "_sources", "_store")
 
-    def __init__(self, ds: Dataset, store: CacheStore, cfg: RunConfig):
+    def __init__(
+        self,
+        ds: Dataset,
+        store: CacheStore,
+        cfg: RunConfig,
+        sources: dict[str, tuple[Callable, dict]] | None = None,
+    ):
         self._ds = ds
         self._store = store
         self._cfg = cfg
+        self._sources = sources or {}  # per-handle runtime user sources ({name: (callable, meta)})
 
     def _run_context(self, **overrides) -> Context:
         """A fresh per-call context sharing this handle's dataset + cache, with per-call config."""
-        return Context(self._ds, replace(self._cfg, **overrides), store=self._store)
+        return Context(self._ds, replace(self._cfg, **overrides), store=self._store, user_sources=self._sources)
 
     def __repr__(self) -> str:
         return f"Prepared(name={Path(self._cfg.dataset).stem!r}, perturbations={len(self._ds.perturbations)})"
@@ -172,6 +183,81 @@ def _stamp() -> str:
     return datetime.now().strftime("%Y-%m-%dT%H%M%S%f")
 
 
+def _const_source(array: np.ndarray):
+    """A source callable that returns its stored constant array for any perturbation."""
+
+    def fn(ctx, pert):
+        return array
+
+    return fn
+
+
+def _validate_sources(sources, ds: Dataset) -> dict[str, tuple[Callable, dict]]:
+    """Validate + register the ``prepare(sources=...)`` user sources for one handle.
+
+    Each ``{name: array}`` becomes a per-handle source (``cacheable=False``): a 1-D ``(G,)`` array
+    is a ``"centroid"`` and a 2-D ``(n, G)`` array is ``"cells"``. Values are copied to a contiguous
+    ``float64`` array (never aliasing the caller's memory). ``G`` is checked against the dataset's
+    gene count, but **not** gene order — see :func:`prepare`.
+    """
+    if not sources:
+        return {}
+    n_genes = len(ds.var_names)
+    out: dict[str, tuple[Callable, dict]] = {}
+    for name, array in sources.items():
+        if name == "auto":
+            raise ValueError("user source name 'auto' is reserved (the control-override sentinel); rename it")
+        if name in SOURCES:
+            raise ValueError(
+                f"user source {name!r} shadows a built-in source ({', '.join(SOURCES.names())}); rename it"
+            )
+        if not isinstance(array, np.ndarray):
+            raise TypeError(f"user source {name!r} must be a numpy array, got {type(array).__name__}")
+        if not np.issubdtype(array.dtype, np.number):
+            raise ValueError(f"user source {name!r} must be numeric, got dtype {array.dtype}")
+        if array.ndim == 1:
+            provides, g = "centroid", array.shape[0]
+        elif array.ndim == 2:
+            provides, g = "cells", array.shape[1]
+        else:
+            raise ValueError(f"user source {name!r} must be 1-D (centroid) or 2-D (cells), got shape {array.shape}")
+        if g != n_genes:
+            raise ValueError(
+                f"user source {name!r} has {g} genes but the dataset has {n_genes}; "
+                f"columns must be in adata.var_names order"
+            )
+        if not np.isfinite(array).all():
+            raise ValueError(f"user source {name!r} has non-finite values (NaN/inf); all entries must be finite")
+        data = np.array(array, dtype=np.float64, order="C")  # contiguous float64 copy, never aliasing caller memory
+        out[name] = (_const_source(data), {"provides": provides, "cacheable": False})
+    return out
+
+
+def _apply_center_on(proto: Protocol, center_on: str, ctx: Context) -> Protocol:
+    """Mint a named centering variant ``<base>_center_<center_on>`` from an un-centred centroid protocol.
+
+    Centering is protocol identity, so a custom-vector baseline is recorded in the protocol name
+    rather than silently overriding a catalog protocol. ``center_on`` must name a registered
+    centroid source (user or built-in).
+    """
+    if proto.representation != "centroid":
+        raise ValueError(f"center_on only applies to centroid protocols; {proto.name!r} is {proto.representation!r}")
+    if proto.centering is not None:
+        raise ValueError(
+            f"center_on requires an un-centered protocol; {proto.name!r} already centers on {proto.centering!r}"
+        )
+    if not ctx.has_source(center_on):
+        raise ValueError(
+            f"center_on source {center_on!r} is not registered; valid sources: {', '.join(ctx.source_names())}"
+        )
+    provides = ctx.source_meta(center_on).get("provides")
+    if provides != "centroid":
+        raise ValueError(
+            f"center_on source {center_on!r} provides {provides!r}, but a centering baseline must be a centroid (1-D)"
+        )
+    return replace(proto, centering=center_on, name=f"{proto.name}_center_{center_on}")
+
+
 # --------------------------------------------------------------------------- public functions
 
 
@@ -186,6 +272,7 @@ def prepare(
     control_label: str = "control",
     workers: int = 0,
     name: str | None = None,
+    sources: dict[str, np.ndarray] | None = None,
 ) -> Prepared:
     """Prepare a dataset for evaluation — the required first step.
 
@@ -208,6 +295,15 @@ def prepare(
         may still run a protocol not declared here; its space is then computed on first use.
     subsample, seed, min_cells, perturbation_key, control_label, workers, name
         Dataset/run knobs fixed for the handle; see :class:`~scperteval.types.RunConfig`.
+    sources : dict[str, numpy.ndarray], optional
+        Runtime **user sources** registered on this handle (never on the global registry, so they
+        don't leak across handles). Each ``{name: array}`` becomes a reusable, constant-across-
+        perturbations source: a 1-D ``(G,)`` array is a centroid, a 2-D ``(n_cells, G)`` array is a
+        cell population. Use them as controls (``negative=``/``positive=`` on :func:`calibrate`) or
+        as a centering baseline (``center_on=`` on :func:`calibrate`/:func:`score`). Arrays must be
+        numeric and all-finite, with ``G`` equal to the dataset's gene count. **Gene-order caveat:**
+        columns are assumed to be in ``adata.var_names`` order — validation checks the gene *count*
+        but cannot check the *order*, so a mis-ordered vector silently compares the wrong genes.
 
     Returns
     -------
@@ -226,9 +322,11 @@ def prepare(
         control_label=control_label,
         workers=workers,
     )
-    ctx = Context(_to_dataset(dataset, cfg), cfg)
+    ds = _to_dataset(dataset, cfg)
+    user_sources = _validate_sources(sources, ds)  # fail fast on bad user sources, before warming
+    ctx = Context(ds, cfg)
     ctx.warm(protos)  # precompute declared spaces + reference (method-independent); no DE
-    return Prepared(ctx.ds, ctx._store, cfg)
+    return Prepared(ctx.ds, ctx._store, cfg, user_sources)
 
 
 def calibrate(
@@ -239,6 +337,7 @@ def calibrate(
     calibrator: CalibratorName = "drf",
     positive: str = "auto",
     negative: str = "auto",
+    center_on: str | None = None,
     out_dir: str | Path | None = None,
 ) -> EvalResult:
     """Calibrate one protocol against the built-in positive/negative controls (DRF or BDS).
@@ -254,7 +353,13 @@ def calibrate(
     calibrator : {"drf", "bds"}, optional
         Which calibrator to apply (default ``"drf"``).
     positive, negative : str, optional
-        Override the protocol's control sources (``"auto"`` defers to the protocol).
+        Override the protocol's control sources (``"auto"`` defers to the protocol). A registered
+        user source (from ``prepare(sources=...)``) is accepted here.
+    center_on : str, optional
+        Center the (un-centred, centroid) protocol on a named centroid source's baseline. Because
+        centering is protocol identity, this **mints a named variant** ``<protocol>_center_<name>``
+        (never a silent override); the variant name flows into ``EvalResult`` and any CSV. ``name``
+        may be a user source or a built-in centroid (e.g. ``"all_perturbed_mean"``).
     out_dir : str or pathlib.Path, optional
         If given, also write the per-perturbation CSV there (as the CLI does).
 
@@ -278,6 +383,9 @@ def calibrate(
         negative=negative,
         out_dir=str(out_dir) if out_dir is not None else "results",
     )
+    if center_on is not None:
+        proto = _apply_center_on(proto, center_on, ctx)
+        ctx.cfg.protocols = [proto.name]  # keep summary/CSV labels in sync with the minted variant
     aggregates, rows, _ = run_all(ctx.cfg, [proto], ctx)
     if out_dir is not None:
         io.write_rows(ctx.cfg, rows, _stamp())
@@ -290,6 +398,7 @@ def score(
     predictions: str | Path | AnnData,
     *,
     de_method: DEMethodName = "t-test",
+    center_on: str | None = None,
     out_dir: str | Path | None = None,
 ) -> EvalResult:
     """Score model predictions against ground truth for one protocol.
@@ -304,6 +413,9 @@ def score(
         Predicted cells — the same genes and perturbation labels as the dataset.
     de_method : str, optional
         DE backend for any DE-dependent part of the protocol (default ``"t-test"``).
+    center_on : str, optional
+        Center on a named centroid source's baseline, minting a ``<protocol>_center_<name>`` variant
+        (see :func:`calibrate`).
     out_dir : str or pathlib.Path, optional
         If given, also write the per-perturbation CSV there.
 
@@ -322,6 +434,9 @@ def score(
         truth="gt_all_cells",
         out_dir=str(out_dir) if out_dir is not None else "results",
     )
+    if center_on is not None:
+        proto = _apply_center_on(proto, center_on, ctx)
+        ctx.cfg.protocols = [proto.name]  # keep summary/CSV labels in sync with the minted variant
     ctx.predictions = _to_predictions(predictions, ctx.ds, ctx.cfg)
     aggregates, rows, _ = run_all(ctx.cfg, [proto], ctx)
     if out_dir is not None:

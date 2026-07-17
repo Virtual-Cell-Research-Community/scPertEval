@@ -66,11 +66,20 @@ class Context:
         Shared cache to reuse (from a prepared handle). A fresh one is created if omitted.
     """
 
-    def __init__(self, dataset: Dataset, cfg: RunConfig, store: CacheStore | None = None):
+    def __init__(
+        self,
+        dataset: Dataset,
+        cfg: RunConfig,
+        store: CacheStore | None = None,
+        user_sources: dict[str, tuple[Callable, dict]] | None = None,
+    ):
         self.ds = dataset
         self.cfg = cfg
         self.predictions: PredictionSet | None = None  # set in prediction-scoring mode
         self.candidates: dict[str, str] = {}  # the running protocol's resolved controls (set by the runner)
+        # Per-handle runtime user sources ({name: (callable, meta)}); read-only, resolved ahead of
+        # the global SOURCES registry so different handles/vectors never leak across each other.
+        self._user_sources = user_sources or {}
         self._local = threading.local()
         self._store = store if store is not None else CacheStore()
 
@@ -91,6 +100,26 @@ class Context:
     @current_pert.setter
     def current_pert(self, value):
         self._local.pert = value
+
+    # -- source resolution: per-handle user sources first, else the global registry ----
+
+    def source(self, name: str) -> Callable:
+        """The callable ``(ctx, pert) -> cells|centroid`` for ``name`` (user source or built-in)."""
+        us = self._user_sources.get(name)
+        return us[0] if us is not None else SOURCES[name]
+
+    def source_meta(self, name: str) -> dict:
+        """Metadata (``provides``/``cacheable``) for ``name`` (user source or built-in)."""
+        us = self._user_sources.get(name)
+        return us[1] if us is not None else SOURCES.meta(name)
+
+    def has_source(self, name: str) -> bool:
+        """Whether ``name`` resolves to a user source or a built-in."""
+        return name in self._user_sources or name in SOURCES
+
+    def source_names(self) -> list[str]:
+        """Sorted names of every resolvable source (user sources + built-ins), for error messages."""
+        return sorted(set(SOURCES.names()) | set(self._user_sources))
 
     def warm(self, protocols):
         """Precompute shared singletons before the parallel loop.
@@ -124,7 +153,7 @@ class Context:
         if p.representation == "population":
             if source == "all_perturbed":
                 return self._reference_population(p.space, pert)
-            return SPACES[p.space](SOURCES[source](self, pert), self, pert)
+            return SPACES[p.space](self.source(source)(self, pert), self, pert)
         if p.representation == "centroid":
             v = self.centroid(pert, source, p.centering)
             return SPACES[p.space](v[None, :], self, pert).ravel()
@@ -134,8 +163,8 @@ class Context:
 
     def centroid(self, pert, source, centering):
         """Pseudobulk centroid of ``source`` for ``pert``, optionally centered."""
-        arr = SOURCES[source](self, pert)
-        if SOURCES.meta(source).get("provides") == "centroid":
+        arr = self.source(source)(self, pert)
+        if self.source_meta(source).get("provides") == "centroid":
             v = np.asarray(arr, dtype=np.float64).ravel()
         else:
             v = np.asarray(to_dense(arr), dtype=np.float64).mean(0)
@@ -143,7 +172,18 @@ class Context:
             v = v - self.control_mean()
         elif centering == "allpert":
             v = v - self.ds.all_perturbed_mean_except(pert)
+        elif centering is not None:  # source-name centering (the center_on path): subtract a named centroid source
+            v = v - self._centering_vector(centering, pert)
         return v
+
+    def _centering_vector(self, name, pert):
+        """Centroid of a named centering source for ``pert`` (the ``center_on`` baseline)."""
+        if self.source_meta(name).get("provides") != "centroid":
+            raise ValueError(
+                f"centering source {name!r} provides {self.source_meta(name).get('provides')!r}, "
+                f"but a centering baseline must be a centroid (1-D)"
+            )
+        return np.asarray(self.source(name)(self, pert), dtype=np.float64).ravel()
 
     def _de_view(self, pert, source, p):
         """Return the DE view: the truth's PerturbationDEResult, or a candidate's ``|statistic|`` ranking.
@@ -191,17 +231,16 @@ class Context:
             self._store.moments[key] = _moments(self._de_cells(source, pert))
         return self._store.moments[key]
 
-    @staticmethod
-    def _cacheable(source):
-        """Whether a source's cells are dataset-derived (shareable) rather than per-call (predictions)."""
-        return SOURCES.meta(source).get("cacheable", True)
+    def _cacheable(self, source):
+        """Whether a source's cells are dataset-derived (shareable) rather than per-call (predictions/user sources)."""
+        return self.source_meta(source).get("cacheable", True)
 
     def _de_cells(self, source, pert):
         if source == "all_perturbed":
             return self.reference().subset(pert)
         if source == "control":
             return self.ds.control_cells(self.cfg.subsample)
-        return SOURCES[source](self, pert)
+        return self.source(source)(self, pert)
 
     @staticmethod
     def _moment_key(source, pert):

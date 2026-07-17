@@ -64,6 +64,29 @@ res.per_perturbation   # DataFrame: raw control values + the calibrated DRF, one
 (`"mse_top_k=30"`); it does not accept `"all"` or a group. Pass `calibrator="bds"` for the Bound
 Discrimination Score instead of DRF.
 
+### Your own vectors as sources
+
+{func}`~scperteval.api.prepare` accepts `sources={"name": array}` to register **runtime user
+sources** on the handle (never on the global registry, so they don't leak across handles). A 1-D
+`(G,)` array is a centroid; a 2-D `(n_cells, G)` array is a cell population. Arrays are validated
+(numeric, all-finite, `G` = the dataset's gene count) and copied. **Columns are assumed to be in
+`adata.var_names` order** — only the count is checked, so a mis-ordered vector silently compares the
+wrong genes.
+
+A registered source is reusable in any slot that accepts its shape:
+
+```python
+prep = sp.prepare(adata, "pearson", sources={"my_baseline": vec})   # vec is a (G,) centroid
+sp.calibrate(prep, "pearson", negative="my_baseline")               # ... as a control
+sp.calibrate(prep, "pearson", center_on="my_baseline")              # ... as a centering baseline
+```
+
+`center_on` centers an **un-centred, centroid** protocol on a named centroid source (user or
+built-in, e.g. `"global_mean"`). Because centering is protocol identity, this **mints a named
+variant** `<protocol>_center_<name>` — recorded in `EvalResult` and any CSV — rather than silently
+overriding the catalog protocol. It also works on {func}`~scperteval.api.score`. (The CLI can't pass
+arrays; centering on named sources there is deferred to the broader centering-source redesign.)
+
 {func}`~scperteval.api.calibrate` returns an {class}`~scperteval.api.EvalResult`:
 
 - `.aggregate` — a `dict` of the calibrator's summary stats (`mean`/`median` for DRF,

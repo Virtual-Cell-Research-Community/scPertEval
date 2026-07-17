@@ -10,7 +10,6 @@ from time import perf_counter
 import numpy as np
 from threadpoolctl import threadpool_limits
 
-from .sources import SOURCES
 from .types import Calibrator, Protocol
 
 #: Generic (positive, negative) control defaults keyed on ``representation`` — the base tier of
@@ -69,7 +68,7 @@ def run_protocol(p: Protocol, ctx, calibrator: Calibrator):
     """
     candidates = _resolve_candidates(p, ctx.cfg)
     needed = {name: candidates[name] for name in calibrator.requires}
-    _check_sources(p, needed)
+    _check_sources(p, needed, ctx)
     ctx.candidates = candidates  # the resolved negative drives _de_view's neg_reference choice
     run = _run_dataset if p.scope == "dataset" else _run_per_perturbation
     return run(p, ctx, calibrator, needed)
@@ -220,19 +219,21 @@ def compute_de(ctx):
     return np.vstack([r[0] for r in res]), np.vstack([r[1] for r in res])
 
 
-def _check_sources(p: Protocol, candidates: dict) -> None:
+def _check_sources(p: Protocol, candidates: dict, ctx) -> None:
     """Validate the resolved control sources: known, and single-cell where the representation requires it.
 
-    Centroid protocols accept both cells and centroid sources (cells are pooled into a centroid), so
-    only ``population``/``de`` protocols demand ``provides="cells"``.
+    Resolution goes through ``ctx`` so per-handle user sources (from ``prepare(sources=...)``) are
+    recognised alongside the built-in registry. Centroid protocols accept both cells and centroid
+    sources (cells are pooled into a centroid), so only ``population``/``de`` protocols demand
+    ``provides="cells"`` — a user centroid vector used there still hits the clear error below.
     """
     for name, src in candidates.items():
-        if src not in SOURCES:
+        if not ctx.has_source(src):
             raise ValueError(
-                f"{p.name}: unknown {name} control source {src!r}; valid sources: {', '.join(SOURCES.names())}"
+                f"{p.name}: unknown {name} control source {src!r}; valid sources: {', '.join(ctx.source_names())}"
             )
-        if p.representation in ("population", "de") and SOURCES.meta(src).get("provides") != "cells":
+        if p.representation in ("population", "de") and ctx.source_meta(src).get("provides") != "cells":
             raise ValueError(
                 f"{p.name}: {name} source {src!r} provides "
-                f"{SOURCES.meta(src).get('provides')!r}, but a single-cell protocol needs cells"
+                f"{ctx.source_meta(src).get('provides')!r}, but a single-cell protocol needs cells"
             )
