@@ -96,6 +96,7 @@ def test_source_array_is_copied_not_aliased(dataset_adata):
     [
         (lambda g: {"x": np.ones(g + 1)}, "genes but the dataset has"),
         (lambda g: {"x": np.array([np.nan] + [0.0] * (g - 1))}, "non-finite"),
+        (lambda g: {"x": np.ones(g, dtype=np.complex128)}, "real-valued numeric"),
         (lambda g: {"control": np.ones(g)}, "shadows a built-in"),
         (lambda g: {"auto": np.ones(g)}, "'auto' is reserved"),
     ],

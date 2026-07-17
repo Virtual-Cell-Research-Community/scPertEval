@@ -213,8 +213,11 @@ def _validate_sources(sources, ds: Dataset) -> dict[str, tuple[Callable, dict]]:
             )
         if not isinstance(array, np.ndarray):
             raise TypeError(f"user source {name!r} must be a numpy array, got {type(array).__name__}")
-        if not np.issubdtype(array.dtype, np.number):
-            raise ValueError(f"user source {name!r} must be numeric, got dtype {array.dtype}")
+        if not (np.issubdtype(array.dtype, np.floating) or np.issubdtype(array.dtype, np.integer)):
+            raise ValueError(
+                f"user source {name!r} must be a real-valued numeric array (integer or floating), "
+                f"got dtype {array.dtype}"
+            )
         if array.ndim == 1:
             provides, g = "centroid", array.shape[0]
         elif array.ndim == 2:
