@@ -1,11 +1,12 @@
 """Feature spaces: a transform applied to the gene axis before a protocol runs.
 
 A space receives raw (possibly sparse) cells and returns a dense array over a gene subset.
-Three parameterised families are registered on demand by factory functions:
+Two registration patterns:
 
-- ``top_<k>`` — top-k genes by ground-truth effect size (:func:`top_space`).
-- ``degs_<padj>`` — ground-truth DEGs at adjusted p < padj (:func:`degs_space`).
-- ``pca_<k>`` — top-k principal components (:func:`pca_space`).
+- **Fixed space** — one decorated function (:func:`space_full`).
+- **Parameterised family** — a factory that registers ``name_<value>`` on demand:
+  ``top_<k>`` (:func:`top_space`), ``degs_<padj>`` (:func:`degs_space`),
+  ``pca_<k>`` (:func:`pca_space`).
 
 Default instances (``top_50``, ``degs_0.05``, ``pca_50``) are created at import;
 these are what ``scperteval list spaces`` shows.
@@ -54,10 +55,16 @@ that structure once, up front, instead of lazily inside the per-perturbation loo
 """
 
 
+# --- Fixed spaces: one registered function each ---
+
+
 @SPACES.register("full", global_space=True, description="all genes, no transform")
 def space_full(X, ctx, pert):
     """Identity space: all genes, densified, no transform."""
     return to_dense(X)
+
+
+# --- Parameterised families: a factory registers name_<value> on demand ---
 
 
 def _field(de, name):
@@ -178,9 +185,13 @@ def pca_space(k: int) -> str:
     """
     name = f"pca_{k}"
     if name not in SPACES:
+
+        def transform(X, ctx, pert):
+            return ctx.pca(k).transform(to_dense(X))[:, :k]
+
         SPACES.add(
             name,
-            lambda X, ctx, pert, k=k: ctx.pca(k).transform(to_dense(X))[:, :k],
+            transform,
             global_space=True,
             prepare=_pca_prepare,
             description=f"top {k} principal components (fit on the dataset)",
