@@ -22,7 +22,7 @@ def _score(name, dataset_adata, pred_adata, cfg):
 
 
 def _score_cfg(cfg_factory):
-    return cfg_factory(truth="gt_all_cells", output="score")
+    return cfg_factory(truth="gt_all_cells", calibrator="score")
 
 
 def test_score_rows_have_prediction_column(dataset_adata, predictions_factory, cfg_factory):

@@ -1,6 +1,6 @@
 """Calibrators turn raw control metric values into a final per-metric score.
 
-Each declares the control roles it needs, a per-perturbation combine, and a
+Each declares the calibrator inputs (candidate names) it needs, a per-perturbation combine, and a
 cross-perturbation aggregate.
 """
 

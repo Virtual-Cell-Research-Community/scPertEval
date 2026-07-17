@@ -162,7 +162,7 @@ Each `provides` cells or a pseudobulk `centroid`. Use via `positive=`/`negative=
 uses `gt_all_cells` and compares it to `prediction`. To add another, see
 [Add a control source](building-blocks.md#add-a-control-source).
 
-**Calibrators** (the `--output` choice)
+**Calibrators** (the `--calibrator` choice)
 
 ```bash
 $ scperteval list calibrators
@@ -171,7 +171,7 @@ bds    — Bound Discrimination Score — fraction of perturbations the positive
 score  — raw metric of a prediction vs ground truth — mean/median over perturbations (prediction-scoring mode)
 ```
 
-`drf`/`bds` are chosen with `calibrate --output`; `score` is selected automatically by the
+`drf`/`bds` are chosen with `calibrate --calibrator`; `score` is selected automatically by the
 `score` command. To add another, see [Add a calibrator](building-blocks.md#add-a-calibrator).
 
 ### More examples

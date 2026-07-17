@@ -71,11 +71,11 @@ def test_calibrate_rejects_multiple_protocols(dataset_adata):
 
 def test_calibrate_rejects_score_output(dataset_adata):
     with pytest.raises(ValueError, match="score"):
-        sp.calibrate(prep(dataset_adata, "mse"), "mse", output="score")
+        sp.calibrate(prep(dataset_adata, "mse"), "mse", calibrator="score")
 
 
 def test_calibrate_bds(dataset_adata):
-    r = sp.calibrate(prep(dataset_adata, "mse"), "mse", output="bds")
+    r = sp.calibrate(prep(dataset_adata, "mse"), "mse", calibrator="bds")
     assert set(r.aggregate) == {"bds"}
     assert 0.0 <= r.aggregate["bds"] <= 1.0
 
@@ -131,7 +131,7 @@ def test_concurrent_mixed_verbs_match_sequential(dataset_adata, predictions_fact
     pred = predictions_factory(dataset_adata, kind="degraded")
     jobs = [
         lambda: sp.calibrate(p, "pearson_ctrl").aggregate["mean"],
-        lambda: sp.calibrate(p, "mse", output="bds").aggregate["bds"],
+        lambda: sp.calibrate(p, "mse", calibrator="bds").aggregate["bds"],
         lambda: sp.calibrate(p, "de_auprc").aggregate["mean"],
         lambda: sp.score(p, "pearson", pred).aggregate["mean"],
         lambda: float(sp.de(p, "MWU").statistic.to_numpy().sum()),

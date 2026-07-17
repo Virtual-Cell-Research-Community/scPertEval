@@ -50,8 +50,8 @@ def test_warm_fits_each_requested_size():
     assert sorted(calls) == [50, 100], f"expected one fit per size, got {calls}"
 
     # Exercising the projections for both dims must not trigger any further fit (both are cached).
-    ctx.ref_projection("pca_50")
-    ctx.ref_projection("pca_100")
+    ctx.reference_projection("pca_50")
+    ctx.reference_projection("pca_100")
     assert sorted(calls) == [50, 100], f"projection triggered a refit: {calls}"
 
 
@@ -70,11 +70,11 @@ def test_pca_50_basis_stable_across_a_larger_fit():
     (and its cached reference projection) yields.
     """
     alone = _ctx()
-    proj_alone = alone.ref_projection("pca_50")
+    proj_alone = alone.reference_projection("pca_50")
 
     with_larger = _ctx()
     with_larger.pca(100)  # a larger fit exists first
-    proj_after = with_larger.ref_projection("pca_50")  # must still use pca_50's own basis
+    proj_after = with_larger.reference_projection("pca_50")  # must still use pca_50's own basis
 
     assert proj_alone.shape == proj_after.shape == (len(alone.reference().cells), 50)
     assert np.allclose(proj_alone, proj_after), "pca_50 desynced after a larger fit was created"
@@ -84,7 +84,7 @@ def test_lazy_pca_without_warm_is_correct():
     """Correctness must not depend on the hook: no warm, projections still compute."""
     ctx = _ctx()
     calls = _spy_fit_pca(ctx)
-    proj = ctx.ref_projection("pca_50")
+    proj = ctx.reference_projection("pca_50")
     assert proj.shape[0] == len(ctx.reference().cells)
     assert proj.shape[1] == 50
     assert np.isfinite(proj).all()
@@ -97,5 +97,5 @@ def test_single_dim_case_fits_once_at_floor():
     ctx = _ctx()
     calls = _spy_fit_pca(ctx)
     ctx.warm(resolve_protocols(["energy_distance_pca_k=50"]))
-    ctx.ref_projection("pca_50")
+    ctx.reference_projection("pca_50")
     assert calls == [50]

@@ -18,8 +18,8 @@ def _n_workers(cfg) -> int:
     return cfg.workers if cfg.workers > 0 else max(1, min(16, (os.cpu_count() or 2) - 2))
 
 
-def _resolve_roles(p: Protocol, cfg) -> dict:
-    """Map each candidate calibrator role to a source name.
+def _resolve_candidates(p: Protocol, cfg) -> dict:
+    """Map each calibrator input (candidate name) to a source name.
 
     ``positive`` / ``negative`` come from the protocol (or a CLI override); ``prediction``
     is always the model-prediction source (used by the ``score`` calibrator).
@@ -56,8 +56,8 @@ def run_protocol(p: Protocol, ctx, calibrator: Calibrator):
     seconds : float
         Wall-clock time for this protocol.
     """
-    roles = _resolve_roles(p, ctx.cfg)
-    needed = {role: roles[role] for role in calibrator.requires}
+    candidates = _resolve_candidates(p, ctx.cfg)
+    needed = {name: candidates[name] for name in calibrator.requires}
     _check_sources(p, needed)
     run = _run_dataset if p.scope == "dataset" else _run_per_perturbation
     return run(p, ctx, calibrator, needed)
@@ -66,14 +66,14 @@ def run_protocol(p: Protocol, ctx, calibrator: Calibrator):
 def run_all(cfg, protocols, ctx):
     """Run every protocol over the dataset and collect results (no printing or file I/O).
 
-    Selects the calibrator from ``cfg.output``, warms the context once over *all* protocols
+    Selects the calibrator from ``cfg.calibrator``, warms the context once over *all* protocols
     (so shared singletons are precomputed before the parallel loop), then runs each protocol.
     Shared by the CLI's ``calibrate``/``score`` commands and the Python API.
 
     Parameters
     ----------
     cfg : ~scperteval.types.RunConfig
-        Resolved run options; ``cfg.output`` selects the calibrator.
+        Resolved run options; ``cfg.calibrator`` selects the calibrator.
     protocols : list of ~scperteval.types.Protocol
         The concrete protocols to evaluate.
     ctx : ~scperteval.context.Context
@@ -90,7 +90,7 @@ def run_all(cfg, protocols, ctx):
     """
     from .calibrators import CALIBRATORS
 
-    calibrator = CALIBRATORS[cfg.output]
+    calibrator = CALIBRATORS[cfg.calibrator]
     # nothing else is running yet to oversubscribe, unlike the per-perturbation loop below
     # (which is why scperteval otherwise pins BLAS/OpenMP to 1 thread, see __init__.py) -- so
     # warm()'s precompute can safely use more than one
@@ -112,7 +112,7 @@ def _finalize(p, calibrator, perts, raws_list):
         {
             "protocol": p.name,
             "perturbation": pert,
-            **{f"raw_{role}": raws[role] for role in raws},
+            **{f"raw_{name}": raws[name] for name in raws},
             calibrator.name: value,
         }
         for pert, raws, value in zip(perts, raws_list, per_pert)
@@ -126,7 +126,7 @@ def _run_per_perturbation(p: Protocol, ctx, calibrator: Calibrator, needed: dict
     def work(pert):
         ctx.current_pert = pert
         gt = ctx.view(pert, ctx.cfg.truth, p)
-        return {role: p.metric(gt, ctx.view(pert, src, p), ctx) for role, src in needed.items()}
+        return {name: p.metric(gt, ctx.view(pert, src, p), ctx) for name, src in needed.items()}
 
     perts = ctx.perturbations
     start = perf_counter()
@@ -155,10 +155,10 @@ def _run_dataset(p: Protocol, ctx, calibrator: Calibrator, needed: dict):
 
     start = perf_counter()
     gt = collect(ctx.cfg.truth)
-    scores = {role: p.metric(gt, collect(src), ctx) for role, src in needed.items()}
+    scores = {name: p.metric(gt, collect(src), ctx) for name, src in needed.items()}
     seconds = perf_counter() - start
 
-    raws_list = [{role: float(scores[role][i]) for role in needed} for i in range(len(perts))]
+    raws_list = [{name: float(scores[name][i]) for name in needed} for i in range(len(perts))]
     agg, rows = _finalize(p, calibrator, perts, raws_list)
     return agg, rows, seconds
 
@@ -179,11 +179,11 @@ def compute_de(ctx):
     return np.vstack([r[0] for r in res]), np.vstack([r[1] for r in res])
 
 
-def _check_sources(p: Protocol, roles: dict) -> None:
+def _check_sources(p: Protocol, candidates: dict) -> None:
     if p.representation in ("population", "de"):
-        for role, src in roles.items():
+        for name, src in candidates.items():
             if SOURCES.meta(src).get("provides") != "cells":
                 raise ValueError(
-                    f"{p.name}: {role} source {src!r} provides "
+                    f"{p.name}: {name} source {src!r} provides "
                     f"{SOURCES.meta(src).get('provides')}, but a single-cell protocol needs cells"
                 )

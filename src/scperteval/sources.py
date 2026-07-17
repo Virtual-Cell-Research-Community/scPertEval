@@ -94,7 +94,7 @@ def src_all_perturbed(ctx, pert):
 )
 def src_all_perturbed_mean(ctx, pert):
     """All-perturbed pseudobulk mean, excluding the target perturbation."""
-    return ctx.ds.allpert_mean_except(pert)
+    return ctx.ds.all_perturbed_mean_except(pert)
 
 
 @SOURCES.register(
@@ -104,7 +104,7 @@ def src_all_perturbed_mean(ctx, pert):
 )
 def src_global_mean(ctx, pert):
     """Pseudobulk mean over all perturbations (no target exclusion)."""
-    return ctx.ds.allpert_mean()
+    return ctx.ds.all_perturbed_mean()
 
 
 @SOURCES.register(
@@ -121,4 +121,4 @@ def src_interpolated(ctx, pert):
     """
     tech = np.asarray(to_dense(ctx.ds.cells(pert, half="second"))).mean(0)
     alpha = np.nan_to_num(1.0 - ctx.de(pert, "tech_dup", "control").pvalue_adj, nan=0.0)
-    return alpha * tech + (1.0 - alpha) * ctx.ds.allpert_mean_except(pert)
+    return alpha * tech + (1.0 - alpha) * ctx.ds.all_perturbed_mean_except(pert)

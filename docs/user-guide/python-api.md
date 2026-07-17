@@ -61,7 +61,7 @@ res.per_perturbation   # DataFrame: raw control values + the calibrated DRF, one
 ```
 
 `calibrate` takes a **single** protocol spec — a name (`"pearson_ctrl"`) or a tunable one
-(`"mse_top_k=30"`); it does not accept `"all"` or a group. Pass `output="bds"` for the Bound
+(`"mse_top_k=30"`); it does not accept `"all"` or a group. Pass `calibrator="bds"` for the Bound
 Discrimination Score instead of DRF.
 
 {func}`~scperteval.api.calibrate` returns an {class}`~scperteval.api.EvalResult`:

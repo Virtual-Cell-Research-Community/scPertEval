@@ -11,7 +11,7 @@ import pandas as pd
 def _print_summary(cfg, aggregates: dict, calibrator, protocols) -> None:
     """Print a formatted table of aggregate scores for every protocol."""
     name = Path(cfg.dataset).stem
-    print(f"\n{name} · {cfg.de_method} · subsample={cfg.subsample} · seed={cfg.seed} · output={cfg.output}\n")
+    print(f"\n{name} · {cfg.de_method} · subsample={cfg.subsample} · seed={cfg.seed} · calibrator={cfg.calibrator}\n")
     agg_keys = sorted({k for v in aggregates.values() for k in v})
     header = f"{'protocol':26s} {'representation':14s} {'space':9s} " + " ".join(f"{k:>9s}" for k in agg_keys)
     print(header)
@@ -50,7 +50,7 @@ def write_rows(cfg, rows: list, timestamp: str) -> Path:
     out_dir = Path(cfg.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     tag = f"{cfg.protocols[0]}__" if len(cfg.protocols) == 1 else ""
-    path = out_dir / f"{Path(cfg.dataset).stem}__{tag}{timestamp}__{cfg.output}.csv"
+    path = out_dir / f"{Path(cfg.dataset).stem}__{tag}{timestamp}__{cfg.calibrator}.csv"
     rows_frame(cfg, rows).to_csv(path, index=False)
     return path
 

@@ -22,7 +22,7 @@ class Dataset:
     def __init__(self, adata, cfg: RunConfig):
         # Retain only the prepare-scoped values the dataset needs at runtime — NOT the whole
         # RunConfig. The per-call config lives on the Context; keeping a second RunConfig here
-        # (with stale per-call fields like de_method/output) would be an easy mix-up.
+        # (with stale per-call fields like de_method/calibrator) would be an easy mix-up.
         self.adata = adata
         self.seed = cfg.seed  # subsampling reproducibility (see _cap)
         self.control_label = cfg.control_label
@@ -52,7 +52,7 @@ class Dataset:
             self.perturbations.append(p)
             means.append(np.asarray(self.adata.X[idx].mean(0)).ravel())
         self._mean_matrix = np.vstack(means) if means else np.zeros((0, len(self.var_names)))
-        self._row = {p: i for i, p in enumerate(self.perturbations)}
+        self._pert_row = {p: i for i, p in enumerate(self.perturbations)}
         self._mean_sum = self._mean_matrix.sum(0)
 
     def cells(self, pert: str, half: str | None = None) -> np.ndarray:
@@ -76,12 +76,12 @@ class Dataset:
         """
         return self._cap(np.where(self.pert != self.control_label)[0], cap, "pool")
 
-    def allpert_mean_except(self, pert: str) -> np.ndarray:
+    def all_perturbed_mean_except(self, pert: str) -> np.ndarray:
         """Mean of all per-perturbation means, excluding ``pert`` (leave-one-out)."""
         k = len(self.perturbations)
-        return (self._mean_sum - self._mean_matrix[self._row[pert]]) / max(k - 1, 1)
+        return (self._mean_sum - self._mean_matrix[self._pert_row[pert]]) / max(k - 1, 1)
 
-    def allpert_mean(self) -> np.ndarray:
+    def all_perturbed_mean(self) -> np.ndarray:
         """Mean of all per-perturbation means (no target exclusion).
 
         A single vector shared across perturbations, used as the cross-perturbation ranking

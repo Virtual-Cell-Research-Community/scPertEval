@@ -236,7 +236,7 @@ def calibrate(
     protocol: str,
     *,
     de_method: DEMethodName = "t-test",
-    output: CalibratorName = "drf",
+    calibrator: CalibratorName = "drf",
     positive: str = "auto",
     negative: str = "auto",
     out_dir: str | Path | None = None,
@@ -251,7 +251,7 @@ def calibrate(
         A single protocol spec — a name (``"pearson_ctrl"``) or a tunable one (``"mse_top_k=30"``).
     de_method : str, optional
         DE backend for any DE-dependent part of the protocol (default ``"t-test"``).
-    output : {"drf", "bds"}, optional
+    calibrator : {"drf", "bds"}, optional
         Which calibrator to apply (default ``"drf"``).
     positive, negative : str, optional
         Override the protocol's control sources (``"auto"`` defers to the protocol).
@@ -264,14 +264,16 @@ def calibrate(
         ``.aggregate`` (the protocol's summary stats) and ``.per_perturbation`` (the detail table).
     """
     _require_prepared(prepared, "calibrate")
-    if output not in ("drf", "bds"):
-        raise ValueError(f"calibrate output must be 'drf' or 'bds', not {output!r} (use score() for predictions)")
+    if calibrator not in ("drf", "bds"):
+        raise ValueError(
+            f"calibrate calibrator must be 'drf' or 'bds', not {calibrator!r} (use score() for predictions)"
+        )
     _check_de_method(de_method)
     proto = _single_protocol(protocol)
     ctx = prepared._run_context(
         protocols=[proto.name],
         de_method=de_method,
-        output=output,
+        calibrator=calibrator,
         positive=positive,
         negative=negative,
         out_dir=str(out_dir) if out_dir is not None else "results",
@@ -316,7 +318,7 @@ def score(
     ctx = prepared._run_context(
         protocols=[proto.name],
         de_method=de_method,
-        output="score",
+        calibrator="score",
         truth="gt_all_cells",
         out_dir=str(out_dir) if out_dir is not None else "results",
     )
@@ -353,7 +355,7 @@ def de(
     _require_prepared(prepared, "de")
     _check_de_method(method)
     ctx = prepared._run_context(de_method=method, out_dir=str(out_dir) if out_dir is not None else "results")
-    ctx._ensure_ref_sums()
+    ctx._ensure_reference_sums()
     statistic, pvalue_adj = compute_de(ctx)
     perts = list(ctx.perturbations)
     genes = [str(g) for g in ctx.ds.var_names]

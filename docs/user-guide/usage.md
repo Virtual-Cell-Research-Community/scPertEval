@@ -48,7 +48,7 @@ scperteval calibrate data/wessels23.h5ad -p distributional --de-method MWU
 scperteval calibrate data/wessels23.h5ad -p all --de-method t-test
 
 # DRF calibration only (compute DRF only; exclude BDS)
-scperteval calibrate data/wessels23.h5ad -p pearson_ctrl --de-method t-test --output drf
+scperteval calibrate data/wessels23.h5ad -p pearson_ctrl --de-method t-test --calibrator drf
 ```
 
 #### Output
@@ -61,7 +61,7 @@ values and calibrated DRF/BDS per perturbation. `--profile` adds a per-protocol 
 ```text
 usage: scperteval calibrate [-h] [-p PROTOCOLS] [--de-method {MWU,t-test,t-test_overestim_var}]
                 [--subsample SUBSAMPLE] [--seed SEED] [--positive POSITIVE]
-                [--negative NEGATIVE] [--output {drf,bds}] [--out-dir OUT_DIR]
+                [--negative NEGATIVE] [--calibrator {drf,bds}] [--out-dir OUT_DIR]
                 [--workers WORKERS] [--perturbation-key PERTURBATION_KEY]
                 [--control-label CONTROL_LABEL] [--min-cells MIN_CELLS]
                 [--profile] [--quiet]
@@ -73,7 +73,7 @@ usage: scperteval calibrate [-h] [-p PROTOCOLS] [--de-method {MWU,t-test,t-test_
                         the interpolated positive control, the top_k/degs spaces,
                         the de_* protocols, and the WMSE weights
   --subsample           cells in the single-cell reference sample (default 8192)
-  --output              {drf, bds}      how per-perturbation values are calibrated
+  --calibrator          {drf, bds}      how per-perturbation values are calibrated
   --positive/--negative override a protocol's controls by source name
   --min-cells           skip perturbations with fewer cells
   --profile             also write a per-protocol wall-clock timing table
@@ -111,7 +111,7 @@ usage: scperteval score [-h] [-p PROTOCOLS] [--de-method {MWU,t-test,t-test_over
   --subsample           cells in the all-perturbed reference (the ground truth is never subsampled)
 ```
 
-Unlike `calibrate`, there are no `--positive`/`--negative`/`--output` options: the candidate is
+Unlike `calibrate`, there are no `--positive`/`--negative`/`--calibrator` options: the candidate is
 always your prediction and the output is always the raw `score`.
 
 </details>

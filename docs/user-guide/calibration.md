@@ -40,7 +40,7 @@ the denominator is the total available dynamic range from baseline down to optim
 | $= 0$ | positive and negative controls score equally |
 | $< 0$ | positive control performs *worse* than the uninformative baseline |
 
-`--output drf` reports the mean/median of $\operatorname{DRF}(a)$ across perturbations.
+`--calibrator drf` reports the mean/median of $\operatorname{DRF}(a)$ across perturbations.
 Introduced by {cite}`Miller_2025`.
 
 ## Bound Discrimination Score (BDS)
@@ -59,7 +59,7 @@ It records whether the positive control beats the negative, but not by how much.
 A protocol with low BDS cannot distinguish a technical replicate from a random reference;
 its scores should not be trusted regardless of their magnitude.
 
-`--output bds` reports this fraction. Introduced by {cite}`Vollenweider_2026`.
+`--calibrator bds` reports this fraction. Introduced by {cite}`Vollenweider_2026`.
 
 ## DRF vs BDS
 

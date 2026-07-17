@@ -65,4 +65,4 @@ CALIBRATORS["my_score"] = Calibrator(
 )
 ```
 
-Then `--output my_score` reports it.
+Then `--calibrator my_score` reports it.

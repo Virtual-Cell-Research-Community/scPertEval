@@ -13,7 +13,7 @@ def test_calibrate_writes_drf_csv(dataset_path, tmp_path):
 
 
 def test_calibrate_bds_output(dataset_path, tmp_path):
-    main(["calibrate", dataset_path, "-p", "mse", "--output", "bds", "--out-dir", str(tmp_path), "--quiet"])
+    main(["calibrate", dataset_path, "-p", "mse", "--calibrator", "bds", "--out-dir", str(tmp_path), "--quiet"])
     assert len(list(tmp_path.glob("*__bds.csv"))) == 1
 
 
@@ -30,6 +30,6 @@ def test_de_writes_h5(dataset_path, tmp_path):
 
 
 def test_calibrate_rejects_score_output(dataset_path, tmp_path):
-    # `score` is a scoring-mode calibrator, not selectable from `calibrate --output`
+    # `score` is a scoring-mode calibrator, not selectable from `calibrate --calibrator`
     with pytest.raises(SystemExit):
-        main(["calibrate", dataset_path, "-p", "mse", "--output", "score", "--out-dir", str(tmp_path)])
+        main(["calibrate", dataset_path, "-p", "mse", "--calibrator", "score", "--out-dir", str(tmp_path)])

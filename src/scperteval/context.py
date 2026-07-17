@@ -29,22 +29,22 @@ class CacheStore:
 
     Held by a :class:`~scperteval.api.Prepared` handle and shared by reference across the
     ephemeral per-call :class:`Context` objects the verbs build. All entries are dataset-level
-    or per-(perturbation, comparison) — none depend on a single call's ``output``/``truth``, so
+    or per-(perturbation, comparison) — none depend on a single call's ``calibrator``/``truth``, so
     concurrent calls reuse them safely (distinct keys, or idempotent recompute under ``lock``).
     """
 
     def __init__(self):
-        # Reentrant: several lazy initialisers (e.g. _ensure_ref_sums, ref_projection)
+        # Reentrant: several lazy initialisers (e.g. _ensure_reference_sums, reference_projection)
         # call reference() while already holding this lock, which a plain Lock would
         # self-deadlock on.
         self.lock = threading.RLock()
-        self.de: dict = {}
-        self.mom: dict = {}
-        self.pca: dict = {}  # fit-size -> fitted PCA; each size fit once and never replaced
+        self.de_results: dict = {}
+        self.moments: dict = {}
+        self.pca_fits: dict = {}  # fit-size -> fitted PCA; each size fit once and never replaced
         self.control_mean: np.ndarray | None = None
         self.reference: Reference | None = None
-        self.ref_proj: dict = {}
-        self.ref_sums: tuple | None = None
+        self.reference_projections: dict = {}
+        self.reference_sums: tuple | None = None
 
 
 class Context:
@@ -100,7 +100,7 @@ class Context:
         if any(p.representation in ("population", "de") for p in protocols):
             self.reference()
         if any(p.representation == "de" for p in protocols):
-            self._ensure_ref_sums()
+            self._ensure_reference_sums()
             self._moments("control", None)
         # A space family may register a `prepare` hook (see the SPACES docstring): run each
         # distinct hook once with the full set of its requested variant names, so the family can
@@ -116,7 +116,7 @@ class Context:
         for space in {
             p.space for p in protocols if p.representation == "population" and SPACES.meta(p.space).get("global_space")
         }:
-            self.ref_projection(space)
+            self.reference_projection(space)
 
     def view(self, pert: str, source: str, p: Protocol):
         """Return ``source``'s datapoint for ``pert`` in the shape ``p`` consumes."""
@@ -141,7 +141,7 @@ class Context:
         if centering == "ctrl":
             v = v - self.control_mean()
         elif centering == "allpert":
-            v = v - self.ds.allpert_mean_except(pert)
+            v = v - self.ds.all_perturbed_mean_except(pert)
         return v
 
     def _de_view(self, pert, source, p):
@@ -165,9 +165,9 @@ class Context:
         """
         method = self.cfg.de_method
         cacheable = self._cacheable(source) and self._cacheable(reference)
-        key = (self._mom_key(source, pert), self._mom_key(reference, pert), method)
-        if cacheable and key in self._store.de:
-            return self._store.de[key]
+        key = (self._moment_key(source, pert), self._moment_key(reference, pert), method)
+        if cacheable and key in self._store.de_results:
+            return self._store.de_results[key]
         # A method may declare a `from_moments` capability (see DE_METHODS); if it does,
         # dispatch through the shared moment cache instead of recomputing from cells.
         from_moments = DE_METHODS.meta(method).get("from_moments")
@@ -176,7 +176,7 @@ class Context:
         else:
             result = DE_METHODS[method](self._de_cells(source, pert), self._de_cells(reference, pert))
         if cacheable:
-            self._store.de[key] = result
+            self._store.de_results[key] = result
         return result
 
     def _moments(self, source, pert):
@@ -184,10 +184,10 @@ class Context:
             return self._reference_moments(pert)
         if not self._cacheable(source):  # per-call source (e.g. prediction) — compute fresh, don't cache
             return _moments(self._de_cells(source, pert))
-        key = self._mom_key(source, pert)
-        if key not in self._store.mom:
-            self._store.mom[key] = _moments(self._de_cells(source, pert))
-        return self._store.mom[key]
+        key = self._moment_key(source, pert)
+        if key not in self._store.moments:
+            self._store.moments[key] = _moments(self._de_cells(source, pert))
+        return self._store.moments[key]
 
     @staticmethod
     def _cacheable(source):
@@ -202,7 +202,7 @@ class Context:
         return SOURCES[source](self, pert)
 
     @staticmethod
-    def _mom_key(source, pert):
+    def _moment_key(source, pert):
         return source if source == "control" else (source, pert)
 
     # -- the all-perturbed reference: one sample, served leave-one-out -------------
@@ -227,35 +227,35 @@ class Context:
         """
         ref = self.reference()
         if SPACES.meta(space).get("global_space"):
-            proj = self.ref_projection(space)
+            proj = self.reference_projection(space)
         else:
             proj = SPACES[space](ref.cells, self, pert)
         keep = ref.keep(pert)
         return proj if keep is None else proj[keep]
 
-    def ref_projection(self, space):
+    def reference_projection(self, space):
         """The reference projected to a perturbation-independent space, cached once."""
-        if space not in self._store.ref_proj:
+        if space not in self._store.reference_projections:
             with self._init_lock:
-                if space not in self._store.ref_proj:
-                    self._store.ref_proj[space] = SPACES[space](self.reference().cells, self, None)
-        return self._store.ref_proj[space]
+                if space not in self._store.reference_projections:
+                    self._store.reference_projections[space] = SPACES[space](self.reference().cells, self, None)
+        return self._store.reference_projections[space]
 
-    def _ensure_ref_sums(self):
+    def _ensure_reference_sums(self):
         """Cache the reference's column sums and sums-of-squares once.
 
         Leave-one-out moments are then an O(target cells) subtraction rather than a
         re-densify per perturbation.
         """
-        if self._store.ref_sums is None:
+        if self._store.reference_sums is None:
             with self._init_lock:
-                if self._store.ref_sums is None:
+                if self._store.reference_sums is None:
                     X = self.reference().cells
-                    self._store.ref_sums = (X.sum(0), np.einsum("ij,ij->j", X, X), len(X))
-        return self._store.ref_sums
+                    self._store.reference_sums = (X.sum(0), np.einsum("ij,ij->j", X, X), len(X))
+        return self._store.reference_sums
 
     def _reference_moments(self, pert):
-        total, totalsq, n = self._ensure_ref_sums()
+        total, totalsq, n = self._ensure_reference_sums()
         keep = self.reference().keep(pert)
         if keep is None:
             s, sq, k = total, totalsq, n
@@ -287,13 +287,13 @@ class Context:
         (e.g. the cached reference projection) already projected through the old basis.
         """
         n = max(k, 50)
-        fit = self._store.pca.get(n)
+        fit = self._store.pca_fits.get(n)
         if fit is None:
             with self._init_lock:
-                fit = self._store.pca.get(n)
+                fit = self._store.pca_fits.get(n)
                 if fit is None:
                     fit = self._fit_pca(n)
-                    self._store.pca[n] = fit
+                    self._store.pca_fits[n] = fit
         return fit
 
     PCA_FIT_CAP = 50000

@@ -33,7 +33,7 @@ class RunConfig:
     #: Path to a model-predictions ``.h5ad`` for prediction-scoring mode; ``None`` selects calibration mode (default).
     predictions: str | None = None
     #: Calibrator to apply — ``"drf"`` or ``"bds"`` (default ``"drf"``).
-    output: str = "drf"
+    calibrator: str = "drf"
     #: Directory for output CSV files (default ``"results"``).
     out_dir: str = "results"
     #: Number of worker threads; 0 auto-detects (default 0).
@@ -166,7 +166,7 @@ class Calibrator:
 
     #: Registry key and output column name (e.g. ``"drf"``).
     name: str
-    #: Control roles needed — typically ``("positive", "negative")``.
+    #: Calibrator inputs (candidate names) it needs — e.g. ``("positive", "negative")``.
     requires: tuple[str, ...]
     #: ``(raws: dict, protocol: Protocol) -> float`` — combines raw control values into one per-perturbation calibrated score.
     per_pert: Callable
