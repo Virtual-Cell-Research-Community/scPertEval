@@ -2,7 +2,8 @@
 
 Spaces, DE methods, control sources, and calibrators are registered units — add one when
 the palette is missing what a new protocol needs. Each is a small function (or object) plus
-a one-line registration.
+a one-line registration. To author the protocol or metric that draws on these blocks, see
+[Create a protocol](protocols.md#create-a-protocol).
 
 ## Add a feature space
 
@@ -35,6 +36,13 @@ def de_my_test(target, reference):
 ```
 
 Then `--de-method my_test` routes every DE-dependent unit through it.
+
+A method whose statistic is expressible from per-gene moments (mean, variance, cell count) may
+additionally declare `from_moments=<callable>` in its `register(...)` metadata to reuse
+scPertEval's cached reference moments, as the built-in `t-test` does — the callable takes
+`(mean_t, var_t, n_t, mean_r, var_r, n_r)` and returns a `PerturbationDEResult`. It's a pure
+performance opt-in: correctness is identical without it, and the `(target, reference)` function
+above is still required.
 
 ## Add a control source
 
