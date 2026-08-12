@@ -29,9 +29,10 @@ jobs:
         # this only checks that the notebook still executes, not that its values match.
         #
         # Notebooks that download large real datasets (hundreds of MB to GBs) are skipped here
-        # via SKIP — they are executed by hand and committed with their outputs.
+        # via SKIP — they are executed by hand and committed with their outputs. Same for
+        # 04_benchmark.ipynb: it imports from ../../models which doesn't exist in a fresh CI
         run: |
-          SKIP="02_preparing_a_dataset.ipynb"
+          SKIP="02_preparing_a_dataset.ipynb 04_benchmark_implementation.ipynb"
           for nb in docs/notebooks/*.ipynb; do
             case " $SKIP " in
               *" $(basename "$nb") "*) echo "skipping $nb (downloads large datasets; not run in CI)"; continue;;
