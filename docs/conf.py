@@ -72,6 +72,7 @@ napoleon_use_rtype = True
 napoleon_use_param = True
 myst_heading_anchors = 6
 myst_enable_extensions = [
+    "alert",
     "amsmath",
     "colon_fence",
     "deflist",
@@ -127,6 +128,7 @@ html_theme_options = {
     "launch_buttons": {"colab_url": "https://colab.research.google.com"},
     "navigation_with_keys": False,
     "show_navbar_depth": 1,
+    "show_toc_level": 2,
 }
 
 pygments_style = "default"
