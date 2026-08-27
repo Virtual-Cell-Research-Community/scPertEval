@@ -144,6 +144,10 @@ class Protocol:
     group: str = ""
     #: If set, makes the protocol tunable from the CLI; ``None`` for fixed protocols.
     param: Param | None = None
+    #: Optional-dependency extra this protocol's metric needs (e.g. ``"sinkhorn"``); ``None``
+    #: for protocols that run on the base install. Bulk selectors (``all``, a group) skip
+    #: protocols whose extra is not installed; naming one explicitly is an error.
+    requires_extra: str | None = None
 
     @property
     def parameterised(self) -> bool:

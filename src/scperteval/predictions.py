@@ -8,7 +8,6 @@ order so every metric's positional ``gt - prediction`` comparison lines up.
 
 from __future__ import annotations
 
-import anndata as ad
 import numpy as np
 
 from .dataset import Dataset
@@ -51,7 +50,9 @@ class PredictionSet:
     @classmethod
     def load(cls, path: str, ds: Dataset, cfg: RunConfig) -> PredictionSet:
         """Load a prediction ``.h5ad`` and gene-align it to ``ds``."""
-        return cls(ad.read_h5ad(path), ds, cfg)
+        from .io import read_h5ad
+
+        return cls(read_h5ad(path, "predictions"), ds, cfg)
 
     def cells(self, pert: str) -> np.ndarray:
         """Predicted cells for one perturbation, columns in the dataset's gene order."""

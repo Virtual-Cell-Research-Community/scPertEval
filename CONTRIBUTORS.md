@@ -7,14 +7,14 @@ welcome. There are a few paths, depending on what you're changing.
 
 If you're adding a protocol (a new metric, or a new combination of an existing metric with
 a space / centering / controls), **open a PR directly.** This is the common case and the
-whole point of the project. See [Create a protocol](https://github.com/Virtual-Cell-Research-Community/scPertEval/blob/main/docs/protocols.md#create-a-protocol) for the
+whole point of the project. See [Create a protocol](https://github.com/Virtual-Cell-Research-Community/scPertEval/blob/main/docs/user-guide/protocols.md#create-a-protocol) for the
 two-step pattern (a pure function in `src/scperteval/protocols/metrics.py` plus a row in
 `src/scperteval/protocols/table.py`). Adding a new building block (feature space, DE method, control
 source, calibrator) the same way is also welcome as a PR.
 
 Please include:
 - a one-line reference to the source paper/method the protocol comes from, where applicable;
-- the protocol added to the table and runnable via `scperteval run ... -p <name>`.
+- the protocol added to the table and runnable via `scperteval calibrate ... -p <name>`.
 
 ## Bugs or changes to core code — open an Issue first
 

@@ -75,12 +75,21 @@ BDS as a pass/fail gate on directionality, DRF as a quantitative measure of sign
 scperteval calibrate data/wessels23.h5ad -p pearson_ctrl,unbiased_mmd_median_pca_k=20,de_overlap_k=10 --de-method t-test
 ```
 
-<!-- TODO: replace with real output from wessels23.h5ad -->
-| protocol | DRF (mean) | BDS |
-|---|---|---|
-| `pearson_ctrl` | … | … |
-| `unbiased_mmd_median_pca_k=20` | … | … |
-| `de_overlap_k=10` | … | … |
+Run on {cite}`Wessels_2023` (157 perturbations, default `--subsample 8192`, `--seed 42`), that
+gives:
+
+| protocol | DRF (mean) | DRF (median) | BDS |
+|---|---|---|---|
+| `pearson_ctrl` | 0.389 | 0.414 | 0.930 |
+| `unbiased_mmd_median_pca_k=20` | 0.942 | 1.000 | 0.994 |
+| `de_overlap_k=10` | 0.077 | 0.000 | 0.382 |
+
+Each row is a different regime. `unbiased_mmd_median_pca_k=20` is strong on both counts: it
+almost always orders the controls correctly (BDS 0.994) *and* recovers most of the available
+range (DRF 0.942). `pearson_ctrl` is directionally reliable (BDS 0.930) but converts that into
+only ~39% of the dynamic range — correct, yet a blunt instrument on this dataset.
+`de_overlap_k=10` fails the gate outright: at BDS 0.382 the positive control loses to the
+negative more often than it wins.
 
 A protocol with BDS < 0.5 cannot reliably order its controls — its scores should not be trusted
 regardless of magnitude. A protocol with high BDS but low DRF is directionally correct but

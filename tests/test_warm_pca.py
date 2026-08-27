@@ -44,7 +44,7 @@ def test_warm_fits_each_requested_size():
     """Two PCA dims requested (pca_50 + pca_100): each size is fit once, none reused by slicing."""
     ctx = _ctx()
     calls = _spy_fit_pca(ctx)
-    protocols = resolve_protocols(["energy_distance_pca_k=50", "sinkhorn_w2_pca_k=100"])
+    protocols = resolve_protocols(["energy_distance_pca_k=50", "unbiased_mmd_median_pca_k=100"])
     ctx.warm(protocols)
 
     assert sorted(calls) == [50, 100], f"expected one fit per size, got {calls}"
@@ -59,7 +59,7 @@ def test_warm_is_order_independent():
     """Every requested size is fit regardless of which spec comes first."""
     ctx = _ctx()
     calls = _spy_fit_pca(ctx)
-    ctx.warm(resolve_protocols(["sinkhorn_w2_pca_k=100", "energy_distance_pca_k=50"]))
+    ctx.warm(resolve_protocols(["unbiased_mmd_median_pca_k=100", "energy_distance_pca_k=50"]))
     assert sorted(calls) == [50, 100]
 
 

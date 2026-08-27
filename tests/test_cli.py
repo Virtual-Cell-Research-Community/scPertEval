@@ -33,3 +33,35 @@ def test_calibrate_rejects_score_output(dataset_path, tmp_path):
     # `score` is a scoring-mode calibrator, not selectable from `calibrate --calibrator`
     with pytest.raises(SystemExit):
         main(["calibrate", dataset_path, "-p", "mse", "--calibrator", "score", "--out-dir", str(tmp_path)])
+
+
+def test_missing_dataset_is_a_clean_error(tmp_path):
+    """A path that does not exist fails as a CLI error, not an h5py traceback."""
+    missing = str(tmp_path / "nope.h5ad")
+    with pytest.raises(SystemExit) as e:
+        main(["calibrate", missing, "-p", "mse", "--out-dir", str(tmp_path)])
+    assert "dataset file not found" in str(e.value)
+    assert missing in str(e.value)
+
+
+def test_missing_predictions_names_the_predictions_file(dataset_path, tmp_path):
+    """The message says which of the two inputs was unreadable."""
+    missing = str(tmp_path / "nope.h5ad")
+    with pytest.raises(SystemExit) as e:
+        main(["score", dataset_path, missing, "-p", "mse", "--out-dir", str(tmp_path)])
+    assert "predictions file not found" in str(e.value)
+
+
+def test_unreadable_h5ad_is_a_clean_error(tmp_path):
+    """A file that exists but is not an .h5ad reports as a CLI error too."""
+    bogus = tmp_path / "bogus.h5ad"
+    bogus.write_text("definitely not HDF5")
+    with pytest.raises(SystemExit) as e:
+        main(["calibrate", str(bogus), "-p", "mse", "--out-dir", str(tmp_path)])
+    assert "as an .h5ad file" in str(e.value)
+
+
+def test_directory_instead_of_file_is_a_clean_error(tmp_path):
+    with pytest.raises(SystemExit) as e:
+        main(["calibrate", str(tmp_path), "-p", "mse", "--out-dir", str(tmp_path)])
+    assert "is a directory" in str(e.value)

@@ -149,10 +149,10 @@ required:
 ```python
 import scperteval as sp
 
-prep = sp.prepare("data/wessels23.h5ad", "pearson_ctrl")   # read + index once, reusable
+prep = sp.prepare("data/wessels23.h5ad", "pearson_ctrl")  # read + index once, reusable
 res = sp.calibrate(prep, "pearson_ctrl", de_method="t-test")
-res.aggregate          # {"mean": …, "median": …} — the DRF summary for this protocol
-res.per_perturbation   # the same table the CLI writes to CSV
+res.aggregate  # {"mean": …, "median": …} — the DRF summary for this protocol
+res.per_perturbation  # the same table the CLI writes to CSV
 ```
 
 See the [Python API guide](python-api) for the prepare-first flow — `prepare` then

@@ -42,7 +42,7 @@ against it as you like — they share its dataset and caches (no reload), and ar
 concurrently.
 
 ```python
-a = sp.calibrate(prep, "pearson_ctrl")   # reuses the shared dataset + caches
+a = sp.calibrate(prep, "pearson_ctrl")  # reuses the shared dataset + caches
 b = sp.calibrate(prep, "mse")
 c = sp.de(prep, "t-test")
 ```
@@ -56,8 +56,8 @@ positive/negative controls (DRF or BDS) — the programmatic equivalent of
 ```python
 res = sp.calibrate(prep, "pearson_ctrl", de_method="t-test")
 
-res.aggregate          # {"mean": …, "median": …} — the DRF summary for this protocol
-res.per_perturbation   # DataFrame: raw control values + the calibrated DRF, one row per perturbation
+res.aggregate  # {"mean": …, "median": …} — the DRF summary for this protocol
+res.per_perturbation  # DataFrame: raw control values + the calibrated DRF, one row per perturbation
 ```
 
 `calibrate` takes a **single** protocol spec — a name (`"pearson_ctrl"`) or a tunable one
@@ -76,9 +76,9 @@ wrong genes.
 A registered source is reusable in any slot that accepts its shape:
 
 ```python
-prep = sp.prepare(adata, "pearson", sources={"my_baseline": vec})   # vec is a (G,) centroid
-sp.calibrate(prep, "pearson", negative="my_baseline")               # ... as a control
-sp.calibrate(prep, "pearson", center_on="my_baseline")              # ... as a centering baseline
+prep = sp.prepare(adata, "pearson", sources={"my_baseline": vec})  # vec is a (G,) centroid
+sp.calibrate(prep, "pearson", negative="my_baseline")  # ... as a control
+sp.calibrate(prep, "pearson", center_on="my_baseline")  # ... as a centering baseline
 ```
 
 `center_on` centers an **un-centred, centroid** protocol on a named centroid source (user or
@@ -106,8 +106,8 @@ the dataset:
 
 ```python
 res = sp.score(prep, "pearson", "predictions.h5ad")
-res.aggregate          # {"mean": …, "median": …} — the raw metric summary
-res.per_perturbation   # DataFrame with a `score` column per perturbation
+res.aggregate  # {"mean": …, "median": …} — the raw metric summary
+res.per_perturbation  # DataFrame with a `score` column per perturbation
 ```
 
 ## Differential expression
@@ -119,8 +119,8 @@ all-perturbed) for **one** method — the equivalent of
 ```python
 d = sp.de(prep, "t-test")
 
-d.statistic    # DataFrame: perturbations × genes (the test statistic)
-d.pvalue_adj   # DataFrame: perturbations × genes (BH-adjusted p-values)
+d.statistic  # DataFrame: perturbations × genes (the test statistic)
+d.pvalue_adj  # DataFrame: perturbations × genes (BH-adjusted p-values)
 ```
 
 {func}`~scperteval.api.de` returns a {class}`~scperteval.api.DatasetDEResults`, a

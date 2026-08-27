@@ -7,10 +7,14 @@
 [![Lint][lint-badge]][lint-link]
 [![Test][test-badge]][test-link]
 [![Build][build-badge]][build-link]
-[![Codecov][codecov-badge]][codecov-link]
 
 scPertEval is a command-line tool for **experimenting with and sharing reference implementations of
 evaluation protocols** in single-cell perturbation studies.
+
+It is introduced in [*Towards Principled Evaluation of Single-Cell Perturbation Prediction
+Models*](https://doi.org/10.64898/2026.07.23.740433) {cite}`Schafer_2026` by Philipp S. L.
+Schäfer, Kendall A. Reid, Zach Boldyga, Ekin D. Aksu, Hugo Hakem, and Julio Saez-Rodriguez —
+please cite it if you use this package.
 
 Evaluating predictions across a dataset's perturbations reduces to a single question: how
 different is one group of cells from another? To answer this, an **evaluation protocol** is
@@ -102,8 +106,7 @@ If you use scPertEval, please cite {cite}`Schafer_2026`.
 [test-link]: https://github.com/Virtual-Cell-Research-Community/scPertEval/actions/workflows/test.yaml
 [build-badge]: https://github.com/Virtual-Cell-Research-Community/scPertEval/actions/workflows/build.yaml/badge.svg
 [build-link]: https://github.com/Virtual-Cell-Research-Community/scPertEval/actions/workflows/build.yaml
-[codecov-badge]: https://codecov.io/gh/Virtual-Cell-Research-Community/scPertEval/branch/main/graph/badge.svg
-[codecov-link]: https://codecov.io/gh/Virtual-Cell-Research-Community/scPertEval
+<!-- Codecov badge intentionally omitted until the repo is activated in the Codecov org. -->
 
 ```{toctree}
 :hidden: true

@@ -289,8 +289,14 @@ def sinkhorn_w2(gt, prediction, ctx, blur=0.05):
     """
     if len(gt) == 0 or len(prediction) == 0:
         return float("nan")
-    import torch
-    from geomloss import SamplesLoss
+    try:
+        import torch  # pyright: ignore[reportMissingImports]  # optional `sinkhorn` extra
+        from geomloss import SamplesLoss  # pyright: ignore[reportMissingImports]
+    except ModuleNotFoundError as e:  # torch/geomloss are the optional `sinkhorn` extra
+        raise ModuleNotFoundError(
+            "The 'sinkhorn_w2' protocol needs the optional Sinkhorn/optimal-transport dependencies "
+            "(torch, geomloss). Install them with:  pip install 'scperteval[sinkhorn]'"
+        ) from e
 
     loss = _geomloss_cache.get(blur)
     if loss is None:

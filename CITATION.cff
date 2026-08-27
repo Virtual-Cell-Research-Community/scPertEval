@@ -1,0 +1,66 @@
+cff-version: 1.2.0
+message: "If you use scPertEval, please cite the paper it accompanies (preferred-citation)."
+title: scPertEval
+abstract: >-
+  Evaluation Protocols for Perturbation Studies: reference implementations of single-cell
+  perturbation evaluation protocols, with per-metric DRF/BDS calibration against empirical
+  positive and negative controls on a single preprocessed dataset.
+type: software
+license: MIT
+repository-code: "https://github.com/Virtual-Cell-Research-Community/scPertEval"
+url: "https://scperteval.readthedocs.io/"
+keywords:
+  - single-cell
+  - perturb-seq
+  - perturbation
+  - differential-expression
+  - benchmark
+  - evaluation
+  - bioinformatics
+# The authors of the paper that introduces scPertEval, in publication order.
+authors:
+  - family-names: Schäfer
+    given-names: Philipp S. L.
+    affiliation: >-
+      Institute for Computational Biomedicine, Heidelberg University and Heidelberg University
+      Hospital
+  - family-names: Reid
+    given-names: Kendall A.
+    affiliation: >-
+      Bioinformatics Program, Center for Biotechnology Education, Johns Hopkins University
+  - family-names: Boldyga
+    given-names: Zach
+    affiliation: Independent Researcher
+  - family-names: Aksu
+    given-names: Ekin D.
+    affiliation: >-
+      Department of Computational Molecular Biology, Max Planck Institute for Molecular Genetics
+  - family-names: Hakem
+    given-names: Hugo
+    affiliation: >-
+      European Molecular Biology Laboratory, European Bioinformatics Institute (EMBL-EBI)
+  - family-names: Saez-Rodriguez
+    given-names: Julio
+    affiliation: >-
+      Institute for Computational Biomedicine, Heidelberg University and Heidelberg University
+      Hospital
+preferred-citation:
+  type: article
+  title: Towards Principled Evaluation of Single-Cell Perturbation Prediction Models
+  journal: bioRxiv
+  year: 2026
+  doi: 10.64898/2026.07.23.740433
+  url: "https://www.biorxiv.org/content/10.64898/2026.07.23.740433v1"
+  authors:
+    - family-names: Schäfer
+      given-names: Philipp S. L.
+    - family-names: Reid
+      given-names: Kendall A.
+    - family-names: Boldyga
+      given-names: Zach
+    - family-names: Aksu
+      given-names: Ekin D.
+    - family-names: Hakem
+      given-names: Hugo
+    - family-names: Saez-Rodriguez
+      given-names: Julio

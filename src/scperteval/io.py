@@ -8,6 +8,27 @@ import numpy as np
 import pandas as pd
 
 
+def read_h5ad(path: str, what: str = "dataset"):
+    """Read an ``.h5ad``, reporting an unreadable path as a clean error.
+
+    anndata/h5py surface a missing or malformed file as an ``OSError`` carrying HDF5's own
+    wording ("unable to synchronously open file..."), which reaches the CLI as a traceback.
+    Re-raising as ``ValueError`` routes it through the CLI's clean-error path and says which
+    input was at fault, since a run takes both a dataset and (optionally) a predictions file.
+    """
+    import anndata as ad
+
+    p = Path(path)
+    if not p.exists():
+        raise ValueError(f"{what} file not found: {path}")
+    if p.is_dir():
+        raise ValueError(f"{what} path is a directory, expected an .h5ad file: {path}")
+    try:
+        return ad.read_h5ad(path)
+    except OSError as e:  # unreadable, not HDF5, truncated…
+        raise ValueError(f"could not read {what} {path!r} as an .h5ad file: {e}") from e
+
+
 def _print_summary(cfg, aggregates: dict, calibrator, protocols, controls: dict) -> None:
     """Print a formatted table of aggregate scores (and resolved controls) for every protocol."""
     name = Path(cfg.dataset).stem

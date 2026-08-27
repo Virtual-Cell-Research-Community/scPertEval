@@ -223,13 +223,12 @@ p < padj) for the space, and `overlap_k` to feed an integer straight to the metr
 function receives `(cells × genes)` matrices; pair it with the single-cell controls:
 
 ```python
-def my_mmd(gt, prediction, ctx):      # gt, prediction are (cells × genes)
+def my_mmd(gt, prediction, ctx):  # gt, prediction are (cells × genes)
     ...
 ```
 
 ```python
-Protocol("my_mmd_top50", M.my_mmd, representation="population", space="top_50",
-         better="lower", perfect=0.0)
+Protocol("my_mmd_top50", M.my_mmd, representation="population", space="top_50", better="lower", perfect=0.0)
 ```
 
 Switching `representation` to `population` does two things at once — the function now sees cells,

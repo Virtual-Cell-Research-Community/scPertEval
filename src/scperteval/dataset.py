@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import zlib
 
-import anndata as ad
 import numpy as np
 import scipy.sparse as sp
 
@@ -34,7 +33,9 @@ class Dataset:
     @classmethod
     def load(cls, path: str, cfg: RunConfig) -> Dataset:
         """Load a dataset from a preprocessed ``.h5ad`` path."""
-        return cls(ad.read_h5ad(path), cfg)
+        from .io import read_h5ad
+
+        return cls(read_h5ad(path, "dataset"), cfg)
 
     def _index(self, min_cells: int):
         rng = np.random.default_rng(self.seed)

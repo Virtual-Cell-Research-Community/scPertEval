@@ -15,6 +15,11 @@ requirements-local.txt
 # Run outputs
 results/
 
+# Local research/scratch work — kept out of git and out of the sdist (hatchling's sdist
+# includes anything not ignored here, so an untracked scratch file would otherwise ship).
+debug_api.py
+stress_empirical/
+
 # Editor / OS
 .idea/
 .vscode/

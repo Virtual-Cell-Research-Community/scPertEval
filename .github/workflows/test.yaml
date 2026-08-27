@@ -94,6 +94,46 @@ jobs:
           fail_ci_if_error: false
           use_oidc: true
 
+  # Install the *exact* lower bounds declared in [project.dependencies] and run the suite against
+  # them. The floors encode real, bisected compatibility limits (see the comment above the
+  # dependency list in pyproject.toml); without this job they are unverifiable claims that drift
+  # out of date silently. Runs on the oldest supported Python for the same reason.
+  floors:
+    name: Tests pass at the declared dependency floors
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          filter: blob:none
+          fetch-depth: 0
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          python-version: "3.11"
+      - name: Pin every dependency to its declared floor
+        run: |
+          python - <<'PY' > floors.txt
+          import pathlib, re, tomllib
+          project = tomllib.loads(pathlib.Path("pyproject.toml").read_text())["project"]
+          deps = project["dependencies"] + project["optional-dependencies"]["sinkhorn"]
+          for dep in deps:
+              m = re.fullmatch(r"([A-Za-z0-9._-]+)>=([0-9][^,;\s]*)", dep.strip())
+              if not m:
+                  raise SystemExit(f"dependency {dep!r} is not a simple `name>=version` floor")
+              print(f"{m[1]}=={m[2]}")
+          PY
+          cat floors.txt
+      - name: Install at the floors
+        # the floors go in first, then the package with --no-deps so it cannot pull them back up
+        run: |
+          uv venv --python 3.11
+          uv pip install -r floors.txt "pytest>=8"
+          uv pip install --no-deps .
+      - name: Run tests
+        env:
+          MPLBACKEND: agg
+        run: uv run --no-sync pytest -v --color=yes
+
   # Check that all tests defined above pass. This makes it easy to set a single "required" test in branch
   # protection instead of having to update it frequently. See https://github.com/re-actors/alls-green#why.
   check:
@@ -102,6 +142,7 @@ jobs:
     needs:
       - get-environments
       - test
+      - floors
     runs-on: ubuntu-latest
     steps:
         - uses: re-actors/alls-green@release/v1

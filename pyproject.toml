@@ -1,45 +1,105 @@
 [build-system]
 build-backend = "hatchling.build"
-requires = [ "hatchling" ]
+requires = [ "hatchling", "hatch-vcs" ]
 
 [project]
 name = "scperteval"
-version = "0.1.0"
+# Version is derived from the latest git tag by hatch-vcs (see [tool.hatch] below). Tag a
+# release `vX.Y.Z` and that becomes the version; untagged builds get a dev version.
+dynamic = [ "version" ]
 description = "Evaluation Protocols for Perturbation Studies: per-metric DRF/BDS calibration on a single preprocessed dataset."
 readme = "README.md"
 license = { file = "LICENSE" }
 maintainers = [
-  { name = "Zach Boldyga" },
+  { name = "Zach Boldyga", email = "zboldyga@gmail.com" },
   { name = "Hugo Hakem", email = "hakem@ebi.ac.uk" },
 ]
+# The authors of the paper that introduces scPertEval, in publication order — see CITATION.cff.
+# Schäfer et al. (2026), "Towards Principled Evaluation of Single-Cell Perturbation Prediction
+# Models", doi:10.64898/2026.07.23.740433
 authors = [
+  { name = "Philipp S. L. Schäfer" },
+  { name = "Kendall A. Reid" },
   { name = "Zach Boldyga" },
+  { name = "Ekin D. Aksu" },
+  { name = "Hugo Hakem" },
+  { name = "Julio Saez-Rodriguez" },
 ]
 requires-python = ">=3.11"
+keywords = [
+  "single-cell",
+  "perturb-seq",
+  "perturbation",
+  "differential-expression",
+  "benchmark",
+  "evaluation",
+  "bioinformatics",
+]
 classifiers = [
+  "Development Status :: 4 - Beta",
+  "Intended Audience :: Science/Research",
+  "License :: OSI Approved :: MIT License",
+  "Operating System :: OS Independent",
   "Programming Language :: Python :: 3 :: Only",
   "Programming Language :: Python :: 3.11",
   "Programming Language :: Python :: 3.12",
   "Programming Language :: Python :: 3.13",
   "Programming Language :: Python :: 3.14",
+  "Topic :: Scientific/Engineering :: Bio-Informatics",
+  "Typing :: Typed",
 ]
+# Every lower bound below is the oldest version the full test suite actually passes on — each
+# one was bisected, not guessed, and the `floors` CI job re-installs exactly these pins on every
+# push so they cannot silently rot. Do not lower one without re-running that job. The
+# non-obvious ones, and what breaks underneath them:
+#
+#   numpy>=2         The dominant constraint. Under numpy 1.x, `illico`'s asymptotic-Wilcoxon
+#                    path (the MWU DE method) computes its test count as a float and then
+#                    formats it with `:,d`, raising "Unknown format code 'd' for object of
+#                    type 'float'". numpy 2 keeps the value integral. This is what forces the
+#                    numpy-2-era floors on h5py, scikit-learn and torch below.
+#   h5py>=3.11       First release with numpy-2 ABI wheels. h5py 3.9/3.10 abort at import with
+#                    "numpy.dtype size changed ... Expected 96 from C header, got 88".
+#   scikit-learn>=1.5  Same story: 1.4 is built against the numpy 1.x ABI.
+#   anndata>=0.12.7  Below this the suite cannot even write its own h5ad fixtures — anndata
+#                    refuses `pd.arrays.StringArray` without opting into
+#                    `settings.allow_write_nullable_strings`. Further down (<=0.11.x) it is a
+#                    genuine runtime break: `illico` reaches for
+#                    `anndata._core.sparse_dataset._CSCDataset`, which does not exist yet.
+#   pandas>=2.2.2    Required by `illico` itself; anything lower is unsatisfiable.
+#   scipy>=1.13      Same — `illico` declares scipy>=1.13,<2.
+#
+# Note `illico` 0.6.0's own metadata is looser than reality (it declares anndata>=0.10.8 while
+# needing ~0.12), which is why these floors are pinned here from testing rather than inherited.
+#
+# torch/geomloss are intentionally NOT here — they are only needed for the Sinkhorn/optimal-
+# transport metrics and live in the optional `sinkhorn` extra below (torch is large).
 dependencies = [
-  "anndata",
-  "geomloss",
-  "h5py",
-  "illico",
-  "numpy",
-  "pandas",
-  "scanpy",
-  "scikit-learn",
-  "scipy",
-  "threadpoolctl",
-  "torch",
+  "anndata>=0.12.7",
+  "h5py>=3.11",
+  "illico>=0.6",
+  "numpy>=2",
+  "pandas>=2.2.2",
+  "scanpy>=1.10",
+  "scikit-learn>=1.5",
+  "scipy>=1.13",
+  "threadpoolctl>=3.1",
 ]
 urls.Documentation = "https://scperteval.readthedocs.io/"
 urls.Homepage = "https://github.com/Virtual-Cell-Research-Community/scPertEval"
 urls.Source = "https://github.com/Virtual-Cell-Research-Community/scPertEval"
 scripts.scperteval = "scperteval.cli:main"
+
+[project.optional-dependencies]
+# The Sinkhorn / Wasserstein-2 optimal-transport metrics (the `sinkhorn_w2_*` protocols) are the
+# only feature that needs torch + geomloss. Install with:  pip install "scperteval[sinkhorn]"
+# torch>=2.4 for the same reason as the numpy-2 floors above: torch 2.1-2.3 are built against
+# the numpy 1.x ABI and, while the metrics still compute, every run is buried under
+# "A module that was compiled using NumPy 1.x cannot be run in NumPy 2.0" warnings.
+sinkhorn = [
+  "geomloss>=0.2.6",
+  "torch>=2.4",
+]
 
 [dependency-groups]
 dev = [
@@ -49,7 +109,9 @@ dev = [
   { include-group = "test" },
 ]
 test = [
-  "pytest",
+  # floored so the `floors` CI job (uv --resolution lowest-direct) lowers the *runtime*
+  # dependencies under test without also dragging pytest back to a prehistoric release
+  "pytest>=8",
 ]
 docs = [
   "ipykernel",
@@ -71,7 +133,10 @@ docs = [
 lint = [
   "mypy",
   "pyright",
-  "ruff",
+  # Pinned to a minor series: ruff's formatter gains new behaviour across minors (0.16 began
+  # formatting Python code blocks inside Markdown), which would otherwise turn CI red on an
+  # unrelated commit. Bump deliberately, reformatting in the same PR.
+  "ruff>=0.16,<0.17",
 ]
 notebook = [
   "ipykernel",
@@ -79,7 +144,29 @@ notebook = [
 ]
 
 [tool.hatch]
+version.source = "vcs"
 build.targets.wheel.packages = [ "src/scperteval" ]
+# An explicit sdist manifest. Hatchling otherwise ships everything not caught by .gitignore, so
+# any stray local file (a scratch script, an editor/agent config) would silently end up in a
+# published release. Listing the contents makes the sdist identical no matter whose tree built it.
+build.targets.sdist.include = [
+  "/.github",
+  "/.pre-commit-config.yaml",
+  "/.readthedocs.yaml",
+  "/CHANGELOG.md",
+  "/CITATION.cff",
+  "/CONTRIBUTORS.md",
+  "/LICENSE",
+  "/README.md",
+  "/RELEASE.md",
+  "/docs",
+  "/pyproject.toml",
+  "/src",
+  "/tests",
+]
+# Install the `sinkhorn` extra in the test environment so CI exercises the full protocol set
+# (torch/geomloss are an optional extra for end users, but tests still cover their metrics).
+envs.hatch-test.features = [ "sinkhorn" ]
 envs.hatch-test.matrix = [ { python = [ "3.11", "3.12", "3.13", "3.14" ] } ]
 
 [tool.ruff]

@@ -3,7 +3,7 @@
 A space receives raw (possibly sparse) cells and returns a dense array over a gene subset.
 Two registration patterns:
 
-- **Fixed space** — one decorated function (:func:`space_full`).
+- **Fixed space** — one decorated function (``space_full``).
 - **Parameterised family** — a factory that registers ``name_<value>`` on demand:
   ``top_<k>`` (:func:`top_space`), ``degs_<padj>`` (:func:`degs_space`),
   ``pca_<k>`` (:func:`pca_space`).
