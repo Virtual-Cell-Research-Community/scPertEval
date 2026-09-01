@@ -1,7 +1,7 @@
 # Reproducing evaluation protocols from the literature
 
-{cite:t}`AhlmannEltze_2025` conclude that deep-learning perturbation-response predictors do not yet
-outperform simple linear baselines. {cite:t}`Miller_2025` benchmark a similar class of models on
+{cite:t}`bench_AhlmannEltze_2025` conclude that deep-learning perturbation-response predictors do not yet
+outperform simple linear baselines. {cite:t}`bench_Miller_2025` benchmark a similar class of models on
 overlapping datasets and conclude the opposite: they do. So why the disagreement?
 
 The answer lies in the protocols chosen for evaluation, namely:
@@ -27,7 +27,7 @@ Below, we discuss the papers' differences in detail.
 
 ## Ahlmann-Eltze, Huber & Anders 2025
 
-{cite:t}`AhlmannEltze_2025` benchmark:
+{cite:t}`bench_AhlmannEltze_2025` benchmark:
 
 - 2 **Purpose-built perturbation prediction models**: GEARS and scGPT
 - 3 **Single-cell foundation models** not originally designed for the task: Geneformer, scBERT and
@@ -52,12 +52,12 @@ the paper's title.
 
 ## Miller et al. 2025
 
-{cite:t}`Miller_2025` benchmark:
+{cite:t}`bench_Miller_2025` benchmark:
 
 - 4 **Purpose-built perturbation prediction models**: scGPT, GEARS, scLAMBDA and PRESAGE
 - 4 **Frozen gene embeddings with an MLP probe trained on top**: Geneformer, GenePT, ESM2 and scGPT
 
-All of them compete against {cite:t}`AhlmannEltze_2025`'s Mean and linear
+All of them compete against {cite:t}`bench_AhlmannEltze_2025`'s Mean and linear
 baselines and add two positive controls of their own: a **technical duplicate** (a held-out half
 of a perturbation's own cells) and an **interpolated duplicate** (a per-gene blend of that duplicate
 and the mean baseline, weighted by DEG significance).
@@ -86,25 +86,25 @@ that deep-learning models do separate from the baselines — hence the paper's t
 ## What we adopt
 
 Neither protocol is wrong — they answer different questions about the same predictions.
-However, {cite:t}`Miller_2025` or follow-on {cite}`Vollenweider_2026` argue that some protocols
+However, {cite:t}`bench_Miller_2025` or follow-on {cite}`bench_Vollenweider_2026` argue that some protocols
 are better calibrated and should be preferred.
 
-We therefore show we can reimplement protocols from both {cite:t}`AhlmannEltze_2025` and
-{cite:t}`Miller_2025` and easily explore their calibration properties with `scPertEval` while
+We therefore show we can reimplement protocols from both {cite:t}`bench_AhlmannEltze_2025` and
+{cite:t}`bench_Miller_2025` and easily explore their calibration properties with `scPertEval` while
 also scoring model predictions.
 
 For our tutorial, we adopt Miller's split — genuine, full-coverage k-fold cross-validation, where every
 perturbation is held out exactly once — over Ahlmann-Eltze's two-seed repeated subsampling, which
 pools a couple of random draws rather than covering the dataset.
 And before trusting any ranking a metric produces, we calibrate it first, exactly as both follow-on papers do:
-check its Dynamic Range Fraction ({cite}`Miller_2025`) and Bound Discrimination Score ({cite}`Vollenweider_2026`)
+check its Dynamic Range Fraction ({cite}`bench_Miller_2025`) and Bound Discrimination Score ({cite}`bench_Vollenweider_2026`)
 before drawing any conclusion from it.
-> Perturbation Discrimination Score (PDS) from {cite}`Vollenweider_2026` could also be added. You can express interest
+> Perturbation Discrimination Score (PDS) from {cite}`bench_Vollenweider_2026` could also be added. You can express interest
 > by checking the [Contributing](../contributing.md) section.
 
 The metrics under test follow the same logic: Ahlmann-Eltze et al.'s 2 (restricted to their
 1,000-gene control-expression panel), Miller et al.'s own 13, and one further metric from
-{cite}`Vollenweider_2026`'s follow-up — the **Weighted Pearson Delta** (in both Ctrl and
+{cite}`bench_Vollenweider_2026`'s follow-up — the **Weighted Pearson Delta** (in both Ctrl and
 PerturbMean form, like every other delta metric here), which extends Miller's DE-effect-size
 weighting — already applied to R²Δ — to Pearson Δ too:
 
@@ -113,14 +113,14 @@ weighting — already applied to R²Δ — to Pearson Δ too:
 | MSE | all genes | `mse` |
 | MSE | DEG ($p_\text{adj} < 0.05$) | `mse_degs_padj` |
 | WMSE | DE-weighted | `wmse_exp2` |
-| $\ell_2$ ({cite}`AhlmannEltze_2025`) | top-1,000 control-expressed | `l2_heg_k` |
+| $\ell_2$ ({cite}`bench_AhlmannEltze_2025`) | top-1,000 control-expressed | `l2_heg_k` |
 | PearsonΔCtrl | all genes | `pearson_ctrl` |
 | PearsonΔCtrl | DEG ($p_\text{adj} < 0.05$) | `pearson_ctrl_degs_padj` |
-| PearsonΔCtrl | DE-weighted ({cite}`Vollenweider_2026`) | `weighted_pearson_ctrl_exp2` |
-| PearsonΔCtrl ({cite}`AhlmannEltze_2025`) | top-1,000 control-expressed | `pearson_ctrl_heg_k` |
+| PearsonΔCtrl | DE-weighted ({cite}`bench_Vollenweider_2026`) | `weighted_pearson_ctrl_exp2` |
+| PearsonΔCtrl ({cite}`bench_AhlmannEltze_2025`) | top-1,000 control-expressed | `pearson_ctrl_heg_k` |
 | PearsonΔPerturbMean | all genes | `pearson_pert` |
 | PearsonΔPerturbMean | DEG ($p_\text{adj} < 0.05$) | `pearson_pert_degs_padj` |
-| PearsonΔPerturbMean | DE-weighted ({cite}`Vollenweider_2026`) | `weighted_pearson_pert_exp2` |
+| PearsonΔPerturbMean | DE-weighted ({cite}`bench_Vollenweider_2026`) | `weighted_pearson_pert_exp2` |
 | R²ΔCtrl | all genes | `r2_ctrl` |
 | R²ΔCtrl | DEG ($p_\text{adj} < 0.05$) | `r2_ctrl_degs_padj` |
 | R²ΔCtrl | DE-weighted | `weighted_r2_ctrl_exp2` |

@@ -29,7 +29,7 @@ repository_url = urls.get("Source", "https://github.com/Virtual-Cell-Research-Co
 
 release = info["Version"]
 
-bibtex_bibfiles = ["references.bib"]
+bibtex_bibfiles = ["references.bib", "benchmark/references.bib"]
 bibtex_reference_style = "author_year"
 templates_path = ["_templates"]
 nitpicky = True

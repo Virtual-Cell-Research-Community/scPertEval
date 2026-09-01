@@ -16,7 +16,7 @@ training at all: TabICLv2.
 
 All of it — training scripts, patches, data prep — lives in [scPertEval-models](https://github.com/Virtual-Cell-Research-Community/scPertEval-models/tree/main). There, each model trains in its own
 isolated `pixi` environment, offering a more reproducible and modern alternative to `conda`, while also being
-simpler to deploy than the `docker` setup used in {cite:t}`Miller_2025`'s codebase. Also, unlike Miller et al.'s paper, no model is reimplemented or wrapped, which eases code review of any modifications.
+simpler to deploy than the `docker` setup used in {cite:t}`bench_Miller_2025`'s codebase. Also, unlike Miller et al.'s paper, no model is reimplemented or wrapped, which eases code review of any modifications.
 
 ## Data preparation
 
@@ -24,7 +24,7 @@ scPertEval's own generic prep (turning a raw perturb-seq `.h5ad` into log-normal
 expression plus a `perturbation` label per cell) is covered in
 [Preparing a dataset](../notebooks/02_preparing_a_dataset.ipynb); `replogle22k562` is that
 tutorial's "easy case," needing little beyond normalization. `models/data/prepare_data.py`
-builds on that with the parts of {cite}`Miller_2025`'s own protocol that scPertEval's generic prep
+builds on that with the parts of {cite}`bench_Miller_2025`'s own protocol that scPertEval's generic prep
 doesn't already share, so every model trains on the same, benchmark-consistent population:
 
 - **Drop unmeasured targets**: perturbations whose own target gene isn't itself a measured
@@ -68,7 +68,7 @@ an autofocus loss (an elevated-exponent MSE that automatically upweights genes w
 true effects) with a direction-aware term penalizing sign mismatches.
 
 We run GEARS largely as shipped, with one deliberate protocol change: rather than its own
-`simulation` split (a 25%-gene holdout, the split {cite}`AhlmannEltze_2025` reused), we feed in
+`simulation` split (a 25%-gene holdout, the split {cite}`bench_AhlmannEltze_2025` reused), we feed in
 scPertEval's own 5-fold split. Architecture and training hyperparameters are left at GEARS' own
 defaults, and GEARS already tracks and predicts from its best validation-loss checkpoint
 natively. The remaining changes are non-modeling fixes to GEARS' own code: atomic, race-safe
@@ -236,7 +236,7 @@ Three baselines require no training:
 - **No-change** predicts, for every perturbation, exactly the dataset's control-cell mean, a
   floor representing zero perturbation effect.
 - **Mean** predicts each fold's held-out perturbations from the average of that fold's own
-  training perturbations' means only ({cite}`Miller_2025`'s $\mu_\text{all}$), deliberately
+  training perturbations' means only ({cite}`bench_Miller_2025`'s $\mu_\text{all}$), deliberately
   scoped to the fold's train split, since averaging in perturbations from the test fold would
   leak information no real trained model has access to.
 - **Interpolated** predicts each fold's held-out perturbations from the average of that fold's own
@@ -252,7 +252,7 @@ Three baselines require no training:
   information — the $\mathrm{technical-duplicate}$ — and is therefore considered difficult to beat.
 
   It is scoped to the fold's train split — both the training mean and the $p_{\mathrm{DEGs}}$ computation — to preserve independence relative to other perturbations in the test set.
-- **Linear** reproduces {cite}`AhlmannEltze_2025`'s ridge-regression baseline directly from
+- **Linear** reproduces {cite}`bench_AhlmannEltze_2025`'s ridge-regression baseline directly from
   their own published script: PCA-embed each fold's training pseudobulk (control included) into
   a shared gene/perturbation embedding $G$, fit a bilinear ridge map $W$ between $G$ and the
   training perturbations' own embedding $P$, and predict a held-out perturbation from its own
@@ -268,7 +268,7 @@ Three baselines require no training:
   control-cell mean plus the training perturbations' own mean deviation from it. Both $G$/$W$
   and $b$ are fit only on the fold's training perturbations, with control itself entered as one
   more training perturbation carrying a zero-vector embedding — a detail
-  {cite}`AhlmannEltze_2025`'s own reference script encodes but its published methods text
+  {cite}`bench_AhlmannEltze_2025`'s own reference script encodes but its published methods text
   simplifies away as "$b$ = row means of $Y_{\mathrm{train}}$".
 
 You can now get details on the benchmark implementation in the [Tutorial 4: Benchmarking](../notebooks/04_benchmark_implementation.ipynb) subsection.
