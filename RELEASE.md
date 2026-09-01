@@ -9,8 +9,8 @@ repository's release/CI/docs machinery is wired together.
 
 **To cut a release:**
 
-1. Update `CHANGELOG.md`: rename the `(unreleased)` heading to the version you're about to
-   release and start a fresh `(unreleased)` section above it. Commit + merge to `main`.
+1. Update `CHANGELOG.md`: rename the `Unreleased` heading to the version you're about to
+   release and start a fresh `Unreleased` section above it. Commit + merge to `main`.
 2. Create a GitHub Release with a `vX.Y.Z` tag from the latest `main`:
 
    ```bash

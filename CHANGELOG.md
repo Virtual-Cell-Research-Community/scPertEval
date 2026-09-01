@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.2.0
+
 ### Added
 
 - 16 protocols reproducing the Miller et al. 2025 and Ahlmann-Eltze et al. 2025 evaluations, on
