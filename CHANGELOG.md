@@ -2,71 +2,47 @@
 
 ## Unreleased
 
-### Feature spaces — breaking (Python API)
+### Added
 
-The feature-space system was reworked. **The CLI is unaffected** — every subcommand, flag, and
-protocol name behaves as before, and scores are unchanged. The entries below only affect code
-that defines or names a space directly.
+- 16 protocols reproducing the Miller et al. 2025 and Ahlmann-Eltze et al. 2025 evaluations, on
+  five new metrics (`r2`, `l2`, `weighted_pearson`, `weighted_r2`, `nir`) — 38 protocols in total,
+  up from 22. Run `scperteval list protocols` for the catalog.
+- Four gene-subset spaces: `heg_<k>` (highest-expressed), `hvg_<k>` (most variable),
+  `perturbed_genes` (genes a perturbation targets), and `perturbed_and_hvgs`.
+- `SPACES.combine_subsets(op, *names, name=...)` builds a space from existing ones by union,
+  intersection, or difference.
+- `@cached` and `DatasetScope` in `scperteval.caching`, for computing a dataset-level value once
+  per prepared dataset.
+- A Model Benchmark tutorial walking through a full evaluation with the package.
 
-**Naming a space.** The per-family factories are gone; one call replaces them.
+### Changed — results may differ
 
-| before | now |
-|---|---|
-| `top_space(50)` | `SPACES.instance("top", 50)` |
-| `degs_space(0.05)` | `SPACES.instance("degs", 0.05)` |
-| `pca_space(50)` | `SPACES.instance("pca", 50)` |
+- Protocols centred on the perturbed mean (`pearson_pert*`, `r2_pert*`, `weighted_*_pert_exp2`)
+  now score against the mean of *all* control cells rather than a capped random subsample. Scores
+  shift slightly on datasets holding more than `--subsample` controls.
+- `r2` and `weighted_r2` are unbounded below rather than floored at -1, so a prediction that
+  ignores the perturbation is no longer indistinguishable from a merely poor one.
 
-A `Protocol` that pins a space must name a registered one. Spaces are created on demand rather
-than all at import, so a bare string no longer resolves on its own:
+### Changed — breaking (Python API only; the CLI is unaffected)
 
-```python
-Protocol("mae_top50", M.mae, space="top_50", ...)                    # before
-Protocol("mae_top50", M.mae, space=SPACES.instance("top", 50), ...)  # now
-```
+Only code that defines or names a feature space directly needs updating.
 
-**Defining a space.** `@SPACES.register` and `SPACES.add` no longer accept spaces (both raise
-with a pointer). Use `@SPACES.subset` for a gene subset, or `@SPACES.transform` for a space that
-replaces the gene axis. A rule declares that it varies by perturbation *by naming a `pert`
-argument* — there is no flag:
+- The per-space factories are gone: use `SPACES.instance("top", 50)` in place of `top_space(50)`,
+  and likewise for `degs_space` / `pca_space`. `register_de_space` is removed, and `Context.pca(k)`
+  becomes `pca_for(ctx, k)` from `scperteval.blocks.spaces.helpers`.
+- A `Protocol` must name a space that exists: `space=SPACES.instance("top", 50)`, not
+  `space="top_50"` — spaces are now created on demand rather than all at import.
+- Define a space with `@SPACES.subset` or `@SPACES.transform` rather than `@SPACES.register`; a
+  rule declares that it varies by perturbation by naming a `pert` argument, and must take one of
+  `(ctx)`, `(ctx, k)`, `(ctx, pert)`, `(ctx, pert, k)`.
+- A space parameter must be a positive number; `top_k=-5` previously scored the *weakest* genes.
+- A space that selects no genes now raises instead of scoring `nan`.
 
-```python
-@SPACES.subset("mito", default=20, description="top {v} mitochondrial genes")
-def mito(ctx, k):                     # dataset-wide
-    ...
+### Housekeeping
 
-@SPACES.subset("mine", default=50, description="top {v} genes for this perturbation")
-def mine(ctx, pert, k):               # per-perturbation
-    ...
-```
-
-Rules take one of four shapes — `(ctx)`, `(ctx, k)`, `(ctx, pert)`, `(ctx, pert, k)` — and any
-other shape is rejected at registration.
-
-`register_de_space` was removed; a DE-derived space is now an ordinary rule. `Context.pca(k)` is
-gone — use `pca_for(ctx, k)` from `scperteval.blocks.spaces.helpers`.
-
-**Space parameters must be positive numbers.** `top_k=-5` previously selected the *weakest* genes
-and `degs_padj=-1` selected none; both now raise.
-
-### Feature spaces — new
-
-- New spaces: `heg_<k>` (highest-expressed genes), `hvg_<k>` (most variable genes),
-  `perturbed_genes` (genes a perturbation targets), and `perturbed_and_hvgs` (the HVG ∪
-  perturbed-genes panel of Miller et al. 2025).
-- `SPACES.combine_subsets(op, *names, name=...)` builds a new space from existing ones by union,
-  intersection, or difference. Whether the result varies by perturbation is derived from its
-  operands.
-- `@cached` and `DatasetScope` in `scperteval.caching` — compute a dataset-level value once per
-  prepared dataset and reuse it.
-- `precompute=` on `@SPACES.transform`, for setup heavy enough to want doing before the parallel
-  scoring loop.
-
-### Feature spaces — behaviour
-
-- `scperteval list spaces` lists what each space *takes* (`heg_<k>`, with its default) rather than
-  one already-created instance, and marks the spaces that vary by perturbation.
-- A space that selects no genes raises instead of scoring `nan`.
-- Naming a space that doesn't exist reports which spaces are available.
+`scperteval list spaces` shows what each space takes (`heg_<k>`) rather than one instance and
+marks those that vary by perturbation; unknown space names report what is available; feature
+spaces moved to a package (`scperteval.blocks.spaces`); citation and docstring corrections.
 
 ## 0.1.0
 
