@@ -17,11 +17,9 @@
 
 ### Changed — results may differ
 
-- Protocols centred on the perturbed mean (`pearson_pert*`, `r2_pert*`, `weighted_*_pert_exp2`)
-  now score against the mean of *all* control cells rather than a capped random subsample. Scores
-  shift slightly on datasets holding more than `--subsample` controls.
-- `r2` and `weighted_r2` are unbounded below rather than floored at -1, so a prediction that
-  ignores the perturbation is no longer indistinguishable from a merely poor one.
+- `pearson_pert`, `pearson_pert_top_k` and `pearson_pert_degs_padj` now score against the mean of
+  *all* control cells rather than a capped random subsample, so their values shift slightly on
+  datasets holding more than `--subsample` controls.
 
 ### Changed — breaking (Python API only; the CLI is unaffected)
 
