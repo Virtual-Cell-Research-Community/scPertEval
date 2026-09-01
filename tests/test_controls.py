@@ -16,34 +16,35 @@ from scperteval.runner import _resolve_candidates, _warn_declared_overrides, run
 # The intended default (positive, negative) for every catalog protocol — doubles as documentation.
 # Generic by representation (centroid: interpolated/all_perturbed_mean, population & de:
 # tech_dup/all_perturbed), with declared deviations: pearson_pert*/r2_pert*/weighted_pearson_pert_exp2
-# -> control (allpert-centred), rank/transpose_rank/nir -> global_mean (dataset-scope chance level).
+# -> control_mean (allpert-centred, so the control centroid is the meaningful null),
+# rank/transpose_rank/nir -> global_mean (dataset-scope chance level).
 EXPECTED = {
     "pearson": ("interpolated", "all_perturbed_mean"),
     "pearson_ctrl": ("interpolated", "all_perturbed_mean"),
-    "pearson_pert": ("interpolated", "control"),
+    "pearson_pert": ("interpolated", "control_mean"),
     "mse": ("interpolated", "all_perturbed_mean"),
     "wmse_exp1": ("interpolated", "all_perturbed_mean"),
     "wmse_exp2": ("interpolated", "all_perturbed_mean"),
     "wmse_exp4": ("interpolated", "all_perturbed_mean"),
     "mse_top_k": ("interpolated", "all_perturbed_mean"),
     "mse_degs_padj": ("interpolated", "all_perturbed_mean"),
-    "pearson_pert_top_k": ("interpolated", "control"),
-    "pearson_pert_degs_padj": ("interpolated", "control"),
+    "pearson_pert_top_k": ("interpolated", "control_mean"),
+    "pearson_pert_degs_padj": ("interpolated", "control_mean"),
     "pearson_heg_k": ("interpolated", "all_perturbed_mean"),
     "pearson_ctrl_heg_k": ("interpolated", "all_perturbed_mean"),
     "l2_heg_k": ("interpolated", "all_perturbed_mean"),
     "pearson_ctrl_top_k": ("interpolated", "all_perturbed_mean"),
     "pearson_ctrl_degs_padj": ("interpolated", "all_perturbed_mean"),
     "weighted_pearson_ctrl_exp2": ("interpolated", "all_perturbed_mean"),
-    "weighted_pearson_pert_exp2": ("interpolated", "control"),
+    "weighted_pearson_pert_exp2": ("interpolated", "control_mean"),
     "r2_ctrl": ("interpolated", "all_perturbed_mean"),
     "r2_ctrl_top_k": ("interpolated", "all_perturbed_mean"),
     "r2_ctrl_degs_padj": ("interpolated", "all_perturbed_mean"),
     "weighted_r2_ctrl_exp2": ("interpolated", "all_perturbed_mean"),
-    "r2_pert": ("interpolated", "control"),
-    "r2_pert_top_k": ("interpolated", "control"),
-    "r2_pert_degs_padj": ("interpolated", "control"),
-    "weighted_r2_pert_exp2": ("interpolated", "control"),
+    "r2_pert": ("interpolated", "control_mean"),
+    "r2_pert_top_k": ("interpolated", "control_mean"),
+    "r2_pert_degs_padj": ("interpolated", "control_mean"),
+    "weighted_r2_pert_exp2": ("interpolated", "control_mean"),
     "rank": ("interpolated", "global_mean"),
     "transpose_rank": ("interpolated", "global_mean"),
     "nir": ("interpolated", "global_mean"),
@@ -94,7 +95,7 @@ def test_resolved_controls_recorded_in_rows(dataset_adata, cfg_factory):
     ctx = Context(Dataset(dataset_adata, cfg), cfg)
     _, rows, _ = run_protocol(_concrete(PROTOCOLS["pearson_pert"]), ctx, CALIBRATORS["drf"])
     assert rows[0]["positive"] == "interpolated"
-    assert rows[0]["negative"] == "control"  # the declared deviation, recorded per row
+    assert rows[0]["negative"] == "control_mean"  # the declared deviation, recorded per row
 
 
 def test_unknown_control_source_raises(dataset_adata, cfg_factory):
