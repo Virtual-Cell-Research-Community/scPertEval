@@ -20,6 +20,9 @@ top_k = Param("k", int, 50, space=partial(SPACES.instance, "top"))  # top-k DEGs
 pca_k = Param("k", int, 50, space=partial(SPACES.instance, "pca"))  # k principal components
 degs_padj = Param("padj", float, 0.05, space=partial(SPACES.instance, "degs"))  # DEGs at adjusted p < padj
 overlap_k = Param("k", int, 50)  # passed straight to de_overlap's k
+heg_k = Param(
+    "k", int, 1000, space=partial(SPACES.instance, "heg")
+)  # top-k highly-expressed genes (Ahlmann-Eltze et al. 2025)
 
 
 # --- shared wiring bundles (score scale + declared control deviations), splatted with ** ---
@@ -40,6 +43,8 @@ _DE: dict[str, Any] = dict(
 )
 # rank retrieval is dataset-scope: the constant global mean is its correct chance-level baseline.
 _RANK: dict[str, Any] = dict(group="pseudobulk", default_negative="global_mean", better="lower", perfect=0.0)
+# nir is 1 - transpose_rank, hence the inverted direction.
+_NIR: dict[str, Any] = dict(group="pseudobulk", default_negative="global_mean", better="higher", perfect=1.0)
 
 
 TABLE = [
@@ -82,11 +87,85 @@ TABLE = [
         default_negative="control",
         **_PB,
     ),
+    # --- Ahlmann-Eltze et al. 2025: top-1000 control-expressed (highly-expressed) genes ---
+    Protocol("pearson_heg_k", M.pearson, representation="centroid", param=heg_k, **_PB),
+    Protocol("pearson_ctrl_heg_k", M.pearson, representation="centroid", centering="control_mean", param=heg_k, **_PB),
+    Protocol("l2_heg_k", M.l2, representation="centroid", param=heg_k, **_PB, **_LOWER),
+    # --- Miller et al. 2025 / Vollenweider & Bühlmann 2026: R2 and DE-weighted delta
+    # correlations, each in three gene-set variants (all genes / DEG top-k / DEG padj / DE
+    # effect-size-weighted) — MSE's own three variants are mse / mse_top_k+mse_degs_padj /
+    # wmse_exp1-4 above; PearsonDeltaPerturbMean's are pearson_pert / pearson_pert_top_k+
+    # pearson_pert_degs_padj / weighted_pearson_pert_exp2 below.
+    Protocol("pearson_ctrl_top_k", M.pearson, representation="centroid", centering="control_mean", param=top_k, **_PB),
+    Protocol(
+        "pearson_ctrl_degs_padj", M.pearson, representation="centroid", centering="control_mean", param=degs_padj, **_PB
+    ),
+    Protocol(
+        "weighted_pearson_ctrl_exp2",
+        partial(M.weighted_pearson, exp=2.0),
+        representation="centroid",
+        centering="control_mean",
+        **_PB,
+    ),
+    Protocol(
+        "weighted_pearson_pert_exp2",
+        partial(M.weighted_pearson, exp=2.0),
+        representation="centroid",
+        centering="all_perturbed_mean",
+        default_negative="control",
+        **_PB,
+    ),
+    Protocol("r2_ctrl", M.r2, representation="centroid", centering="control_mean", **_PB),
+    Protocol("r2_ctrl_top_k", M.r2, representation="centroid", centering="control_mean", param=top_k, **_PB),
+    Protocol("r2_ctrl_degs_padj", M.r2, representation="centroid", centering="control_mean", param=degs_padj, **_PB),
+    Protocol(
+        "weighted_r2_ctrl_exp2",
+        partial(M.weighted_r2, exp=2.0),
+        representation="centroid",
+        centering="control_mean",
+        **_PB,
+    ),
+    Protocol(
+        "r2_pert",
+        M.r2,
+        representation="centroid",
+        centering="all_perturbed_mean",
+        default_negative="control",
+        **_PB,
+    ),
+    Protocol(
+        "r2_pert_top_k",
+        M.r2,
+        representation="centroid",
+        centering="all_perturbed_mean",
+        param=top_k,
+        default_negative="control",
+        **_PB,
+    ),
+    Protocol(
+        "r2_pert_degs_padj",
+        M.r2,
+        representation="centroid",
+        centering="all_perturbed_mean",
+        param=degs_padj,
+        default_negative="control",
+        **_PB,
+    ),
+    Protocol(
+        "weighted_r2_pert_exp2",
+        partial(M.weighted_r2, exp=2.0),
+        representation="centroid",
+        centering="all_perturbed_mean",
+        default_negative="control",
+        **_PB,
+    ),
     # --- cross-perturbation retrieval rank (dataset-wide over centroids) ---
     Protocol("rank", partial(M.rank_retrieval, transpose=False), representation="centroid", scope="dataset", **_RANK),
     Protocol(
         "transpose_rank", partial(M.rank_retrieval, transpose=True), representation="centroid", scope="dataset", **_RANK
     ),
+    # --- Miller et al. 2025: Normalized Inverse Rank — transpose_rank, oriented higher-is-better ---
+    Protocol("nir", M.nir, representation="centroid", scope="dataset", **_NIR),
     # --- distributional: distances between cell populations (positive = technical duplicate) ---
     Protocol("unbiased_mmd_median_top_k", M.unbiased_mmd_median, representation="population", param=top_k, **_DIST),
     Protocol("unbiased_mmd_median_pca_k", M.unbiased_mmd_median, representation="population", param=pca_k, **_DIST),

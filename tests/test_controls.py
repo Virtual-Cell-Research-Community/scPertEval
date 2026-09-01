@@ -15,8 +15,8 @@ from scperteval.runner import _resolve_candidates, _warn_declared_overrides, run
 
 # The intended default (positive, negative) for every catalog protocol — doubles as documentation.
 # Generic by representation (centroid: interpolated/all_perturbed_mean, population & de:
-# tech_dup/all_perturbed), with two declared deviations: pearson_pert* -> control (allpert-centred),
-# rank/transpose_rank -> global_mean (dataset-scope chance level).
+# tech_dup/all_perturbed), with declared deviations: pearson_pert*/r2_pert*/weighted_pearson_pert_exp2
+# -> control (allpert-centred), rank/transpose_rank/nir -> global_mean (dataset-scope chance level).
 EXPECTED = {
     "pearson": ("interpolated", "all_perturbed_mean"),
     "pearson_ctrl": ("interpolated", "all_perturbed_mean"),
@@ -29,8 +29,24 @@ EXPECTED = {
     "mse_degs_padj": ("interpolated", "all_perturbed_mean"),
     "pearson_pert_top_k": ("interpolated", "control"),
     "pearson_pert_degs_padj": ("interpolated", "control"),
+    "pearson_heg_k": ("interpolated", "all_perturbed_mean"),
+    "pearson_ctrl_heg_k": ("interpolated", "all_perturbed_mean"),
+    "l2_heg_k": ("interpolated", "all_perturbed_mean"),
+    "pearson_ctrl_top_k": ("interpolated", "all_perturbed_mean"),
+    "pearson_ctrl_degs_padj": ("interpolated", "all_perturbed_mean"),
+    "weighted_pearson_ctrl_exp2": ("interpolated", "all_perturbed_mean"),
+    "weighted_pearson_pert_exp2": ("interpolated", "control"),
+    "r2_ctrl": ("interpolated", "all_perturbed_mean"),
+    "r2_ctrl_top_k": ("interpolated", "all_perturbed_mean"),
+    "r2_ctrl_degs_padj": ("interpolated", "all_perturbed_mean"),
+    "weighted_r2_ctrl_exp2": ("interpolated", "all_perturbed_mean"),
+    "r2_pert": ("interpolated", "control"),
+    "r2_pert_top_k": ("interpolated", "control"),
+    "r2_pert_degs_padj": ("interpolated", "control"),
+    "weighted_r2_pert_exp2": ("interpolated", "control"),
     "rank": ("interpolated", "global_mean"),
     "transpose_rank": ("interpolated", "global_mean"),
+    "nir": ("interpolated", "global_mean"),
     "unbiased_mmd_median_top_k": ("tech_dup", "all_perturbed"),
     "unbiased_mmd_median_pca_k": ("tech_dup", "all_perturbed"),
     "energy_distance_top_k": ("tech_dup", "all_perturbed"),
