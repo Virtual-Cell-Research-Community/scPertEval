@@ -15,6 +15,7 @@ import numpy as np
 
 from .blocks.de import DE_METHODS, _moments
 from .blocks.spaces import SPACES
+from .caching import DatasetScope, _once, cached
 from .dataset import Dataset, to_dense
 from .reference import Reference
 from .sources import SOURCES
@@ -38,13 +39,20 @@ class CacheStore:
         # call reference() while already holding this lock, which a plain Lock would
         # self-deadlock on.
         self.lock = threading.RLock()
-        self.de_results: dict = {}
-        self.moments: dict = {}
-        self.pca_fits: dict = {}  # fit-size -> fitted PCA; each size fit once and never replaced
-        self.control_mean: np.ndarray | None = None
-        self.reference: Reference | None = None
-        self.reference_projections: dict = {}
-        self.reference_sums: tuple | None = None
+        self.memo: dict = {}  # (function, params) -> value, for every @cached/_once computation
+        self.scope: DatasetScope | None = None  # the settings every value here was computed under
+
+
+@cached
+def _control_mean(scope: DatasetScope) -> np.ndarray:
+    return scope.ds.control_mean()
+
+
+@cached
+def _reference(scope: DatasetScope) -> Reference:
+    idx = scope.ds.all_perturbed_indices(scope.subsample)
+    cells = to_dense(scope.ds.adata.X[idx]).astype(np.float64)
+    return Reference(cells, scope.ds.pert[idx])
 
 
 class Context:
@@ -82,10 +90,6 @@ class Context:
         self._user_sources = user_sources or {}
         self._local = threading.local()
         self._store = store if store is not None else CacheStore()
-
-    @property
-    def _init_lock(self):
-        return self._store.lock
 
     @property
     def perturbations(self):
@@ -132,17 +136,14 @@ class Context:
         if any(p.representation == "de" for p in protocols):
             self._ensure_reference_sums()
             self._moments("control", None)
-        # A space family may register a `prepare` hook (see the SPACES docstring): run each
-        # distinct hook once with the full set of its requested variant names, so the family can
-        # do its one-time shared precompute before the per-perturbation loop. Runs before the
-        # projection loop below so global spaces are ready when it reads them.
-        hooks: dict[Callable, set[str]] = {}
+        # A space may declare a `precompute` hook (see `SpaceRegistry.transform`): run its heavy
+        # setup here, while the machine is idle and BLAS can use every thread, rather than inside
+        # the per-perturbation loop. Repeat calls are cache hits, so the list needs no de-duping.
+        # Runs before the projection loop below so global spaces are ready when it reads them.
         for p in protocols:
-            hook = SPACES.meta(p.space).get("prepare")
-            if hook is not None:
-                hooks.setdefault(hook, set()).add(p.space)
-        for hook, names in hooks.items():
-            hook(self, names)
+            meta = SPACES.meta(p.space)
+            if meta.get("precompute") is not None:
+                meta["precompute"](self, meta["value"])
         for space in {
             p.space for p in protocols if p.representation == "population" and SPACES.meta(p.space).get("global_space")
         }:
@@ -202,20 +203,19 @@ class Context:
         different predictions without cross-call contamination.
         """
         method = self.cfg.de_method
-        cacheable = self._cacheable(source) and self._cacheable(reference)
+
+        def compute():
+            # A method may declare a `from_moments` capability (see DE_METHODS); if it does,
+            # dispatch through the shared moment cache instead of recomputing from cells.
+            from_moments = DE_METHODS.meta(method).get("from_moments")
+            if from_moments is not None:
+                return from_moments(*self._moments(source, pert), *self._moments(reference, pert))
+            return DE_METHODS[method](self._de_cells(source, pert), self._de_cells(reference, pert))
+
+        if not (self._cacheable(source) and self._cacheable(reference)):
+            return compute()
         key = (self._moment_key(source, pert), self._moment_key(reference, pert), method)
-        if cacheable and key in self._store.de_results:
-            return self._store.de_results[key]
-        # A method may declare a `from_moments` capability (see DE_METHODS); if it does,
-        # dispatch through the shared moment cache instead of recomputing from cells.
-        from_moments = DE_METHODS.meta(method).get("from_moments")
-        if from_moments is not None:
-            result = from_moments(*self._moments(source, pert), *self._moments(reference, pert))
-        else:
-            result = DE_METHODS[method](self._de_cells(source, pert), self._de_cells(reference, pert))
-        if cacheable:
-            self._store.de_results[key] = result
-        return result
+        return _once(self._store, ("de", key), compute)
 
     def _moments(self, source, pert):
         if source == "all_perturbed":
@@ -223,9 +223,7 @@ class Context:
         if not self._cacheable(source):  # per-call source (e.g. prediction) — compute fresh, don't cache
             return _moments(self._de_cells(source, pert))
         key = self._moment_key(source, pert)
-        if key not in self._store.moments:
-            self._store.moments[key] = _moments(self._de_cells(source, pert))
-        return self._store.moments[key]
+        return _once(self._store, ("moments", key), lambda: _moments(self._de_cells(source, pert)))
 
     def _cacheable(self, source):
         """Whether a source's cells are dataset-derived (shareable) rather than per-call (predictions/user sources)."""
@@ -249,13 +247,7 @@ class Context:
 
         Each cell's perturbation is recorded so the sample can be served leave-one-out.
         """
-        if self._store.reference is None:
-            with self._init_lock:
-                if self._store.reference is None:
-                    idx = self.ds.all_perturbed_indices(self.cfg.subsample)
-                    cells = to_dense(self.ds.adata.X[idx]).astype(np.float64)
-                    self._store.reference = Reference(cells, self.ds.pert[idx])
-        return self._store.reference
+        return _reference(self)
 
     def _reference_population(self, space, pert):
         """The reference in a feature space with the target perturbation removed.
@@ -272,11 +264,9 @@ class Context:
 
     def reference_projection(self, space):
         """The reference projected to a perturbation-independent space, cached once."""
-        if space not in self._store.reference_projections:
-            with self._init_lock:
-                if space not in self._store.reference_projections:
-                    self._store.reference_projections[space] = SPACES[space](self.reference().cells, self, None)
-        return self._store.reference_projections[space]
+        return _once(
+            self._store, ("reference_projection", (space,)), lambda: SPACES[space](self.reference().cells, self, None)
+        )
 
     def _ensure_reference_sums(self):
         """Cache the reference's column sums and sums-of-squares once.
@@ -284,12 +274,12 @@ class Context:
         Leave-one-out moments are then an O(target cells) subtraction rather than a
         re-densify per perturbation.
         """
-        if self._store.reference_sums is None:
-            with self._init_lock:
-                if self._store.reference_sums is None:
-                    X = self.reference().cells
-                    self._store.reference_sums = (X.sum(0), np.einsum("ij,ij->j", X, X), len(X))
-        return self._store.reference_sums
+
+        def compute():
+            X = self.reference().cells
+            return (X.sum(0), np.einsum("ij,ij->j", X, X), len(X))
+
+        return _once(self._store, ("reference_sums", ()), compute)
 
     def _reference_moments(self, pert):
         total, totalsq, n = self._ensure_reference_sums()
@@ -305,53 +295,28 @@ class Context:
         var = np.maximum((sq / k - mean * mean) * (k / max(k - 1, 1)), 0.0)
         return mean, var, k
 
+    def scope(self):
+        """The prepare-scoped view a ``@cached`` dataset computation is given.
+
+        Only settings fixed when the handle was prepared — never per-call config, which the
+        shared cache outlives.
+        """
+        from .runner import _n_workers  # local: runner imports this module
+
+        scope = DatasetScope(self.ds, self.cfg.seed, _n_workers(self.cfg), self.cfg.subsample)
+        if self._store.scope is None:
+            self._store.scope = scope
+        else:
+            # `threads` is excluded: it changes how fast a value is computed, never what it is.
+            was = self._store.scope
+            if was.ds is not scope.ds or (was.seed, was.subsample) != (scope.seed, scope.subsample):
+                raise ValueError(
+                    "this cache holds values computed for a different dataset, seed, or subsample. "
+                    "A CacheStore belongs to one prepare() call -- build a new handle rather than "
+                    "sharing one across settings."
+                )
+        return scope
+
     def control_mean(self):
-        """The control centroid (cached)."""
-        if self._store.control_mean is None:
-            with self._init_lock:
-                if self._store.control_mean is None:
-                    self._store.control_mean = self.ds.control_mean()
-        return self._store.control_mean
-
-    def pca(self, k=50):
-        """A fitted PCA whose top ``k`` components a ``pca_<k>`` space slices.
-
-        Fits are cached per fit-size (``max(k, 50)``) and **never replaced**, so a given ``k``
-        always resolves to the same basis regardless of call order. A later, larger ``k`` adds a
-        separate fit rather than refitting the shared slot — sklearn's PCA is not basis-stable
-        across ``n_components`` (the solver switches, and randomized SVD is not nested), so slicing
-        a smaller ``pca_k`` out of a larger fit would silently change its result and desync anything
-        (e.g. the cached reference projection) already projected through the old basis.
-        """
-        n = max(k, 50)
-        fit = self._store.pca_fits.get(n)
-        if fit is None:
-            with self._init_lock:
-                fit = self._store.pca_fits.get(n)
-                if fit is None:
-                    fit = self._fit_pca(n)
-                    self._store.pca_fits[n] = fit
-        return fit
-
-    PCA_FIT_CAP = 50000
-
-    def _fit_pca(self, n_components):
-        """Fit PCA on (nearly) all cells.
-
-        The subsample cap is for the O(n^2) distance populations, not the PCA basis, which
-        needs many cells to be stable.
-        """
-        from sklearn.decomposition import PCA
-        from threadpoolctl import threadpool_limits
-
-        from .runner import _n_workers
-
-        n = self.ds.adata.n_obs
-        idx = np.arange(n)
-        if n > self.PCA_FIT_CAP:
-            idx = np.sort(np.random.default_rng(self.cfg.seed).choice(n, self.PCA_FIT_CAP, replace=False))
-        X = to_dense(self.ds.adata.X[idx]).astype(np.float64)
-        # sklearn's bundled BLAS/OpenMP only loads with the import above, after run_all()'s own
-        # threadpool_limits already scanned -- re-scan here so it's actually caught and capped
-        with threadpool_limits(limits=_n_workers(self.cfg)):
-            return PCA(n_components=min(n_components, *X.shape), random_state=self.cfg.seed).fit(X)
+        """The control centroid (cached). Kept as a method: sources and centering both read it."""
+        return _control_mean(self)

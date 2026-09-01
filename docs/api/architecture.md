@@ -28,10 +28,11 @@ and passed to every metric. It lazily builds and caches the shared, expensive co
 Three registries, keyed by name and looked up through the `Context`:
 
 - **Spaces** ({obj}`~scperteval.blocks.spaces.SPACES`) — a transform applied to the gene
-  axis before scoring: `top_<k>` ({func}`~scperteval.blocks.spaces.top_space`, top-k genes
-  by ground-truth effect size), `degs_<padj>` ({func}`~scperteval.blocks.spaces.degs_space`,
-  ground-truth DEGs at an adjusted p-value threshold), `pca_<k>`
-  ({func}`~scperteval.blocks.spaces.pca_space`, top-k principal components).
+  axis before scoring. Each is a decorated rule in `blocks/spaces/catalog.py`: gene subsets
+  (`full`, `top_<k>`, `degs_<padj>`, `heg_<k>`, `hvg_<k>`, `perturbed_genes`,
+  `perturbed_and_hvgs`) and one transform, `pca_<k>`. Definitions become registered instances via
+  {meth}`~scperteval.blocks.spaces.SpaceRegistry.instance`; subsets fold together with
+  {meth}`~scperteval.blocks.spaces.SpaceRegistry.combine_subsets`.
 - **DE backends** ({obj}`~scperteval.blocks.de.DE_METHODS`) — differential-expression
   methods sharing one {class}`~scperteval.types.PerturbationDEResult` interface: `t-test`
   ({func}`~scperteval.blocks.de.de_ttest`, default, moment-based),

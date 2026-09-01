@@ -170,7 +170,7 @@ def test_moment_capability_dispatches_through_cache():
         assert calls["from_moments"] == len(perts)
         assert calls["cells"] == 0
         # The `control` source's moments were computed once and reused across perturbations.
-        assert list(ctx._store.moments.keys()) == ["control"]
+        assert [k[1] for k in ctx._store.memo if k[0] == "moments"] == ["control"]
         # And it agrees with computing t-test directly from the same cached moments.
         for p, de in zip(perts, results, strict=True):
             expected = ttest_from_moments(*ctx._moments("control", p), *ctx._moments("all_perturbed", p))

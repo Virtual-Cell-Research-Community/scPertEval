@@ -20,6 +20,9 @@ results/
 debug_api.py
 stress_empirical/
 
+# Local predictions/data pulled in from scPertEval-models to feed the benchmark tutorial
+models/
+
 # Editor / OS
 .idea/
 .vscode/

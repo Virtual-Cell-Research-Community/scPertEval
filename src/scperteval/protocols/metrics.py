@@ -23,7 +23,7 @@ Two protocol fields control what the metric receives:
 from __future__ import annotations
 
 import numpy as np
-from sklearn.metrics import average_precision_score, roc_auc_score
+from sklearn.metrics import average_precision_score, r2_score, roc_auc_score
 
 from ..blocks.de import mejia_weights
 
@@ -135,6 +135,35 @@ def pearson(gt, prediction, ctx):
 
 
 @_doc(params=_CENTROID)
+def r2(gt, prediction, ctx):
+    r"""Coefficient of determination between pseudobulk profiles.
+
+    .. math::
+
+        R^2 = 1 - \frac{\sum_g (gt_g - pred_g)^2}{\sum_g (gt_g - \bar{gt})^2}
+
+    Unlike :func:`pearson`, this penalises bias and scale errors, not just linear
+    association — a prediction that is perfectly correlated with, but off-scale from, the
+    ground truth still loses R² :cite:p:`Miller_2025`.
+
+    Deliberately unbounded below, matching :cite:t:`Mejia_2025`'s reference implementation:
+    a prediction that ignores the perturbation is guaranteed :math:`\leq 0` (their Appendix B),
+    and how far below tells you how badly it failed. Clipping that range would erase the
+    property R² is chosen for, and would distort the DRF of both controls at once.
+
+    Parameters
+    ----------
+    %(params)s
+
+    Returns
+    -------
+    float
+        R² ≤ 1; 1 is perfect, 0 matches the mean baseline, negative is worse than it.
+    """
+    return float(r2_score(gt, prediction))
+
+
+@_doc(params=_CENTROID)
 def mse(gt, prediction, ctx):
     r"""Mean squared error between pseudobulk profiles.
 
@@ -152,6 +181,26 @@ def mse(gt, prediction, ctx):
         Non-negative MSE; 0 is perfect.
     """
     return float(np.mean((gt - prediction) ** 2))
+
+
+@_doc(params=_CENTROID)
+def l2(gt, prediction, ctx):
+    r"""Euclidean distance between pseudobulk profiles.
+
+    .. math::
+
+        \ell_2 = \sqrt{\sum_{g=1}^G (gt_g - pred_g)^2}
+
+    Parameters
+    ----------
+    %(params)s
+
+    Returns
+    -------
+    float
+        Non-negative Euclidean distance; 0 is perfect.
+    """
+    return float(np.sqrt(np.sum((gt - prediction) ** 2)))
 
 
 @_doc(params=_CENTROID_W)
@@ -184,6 +233,72 @@ def weighted_mse(gt, prediction, ctx, exp=2.0):
     s = ctx.de(ctx.current_pert, ctx.cfg.truth, "all_perturbed").statistic
     w = mejia_weights(s, exp=exp)
     return float(np.sum(w * (gt - prediction) ** 2))
+
+
+@_doc(params=_CENTROID_W)
+def weighted_pearson(gt, prediction, ctx, exp=2.0):
+    r"""Pearson correlation weighted by ground-truth effect size raised to ``exp``.
+
+    Same per-gene weights as :func:`weighted_mse`, applied as a weighted covariance instead of a
+    weighted squared error — the "weighted Pearson Delta" of :cite:t:`Vollenweider_2026`.
+
+    Assumes the weights sum to 1, which :func:`~scperteval.blocks.de.mejia_weights` guarantees
+    (:cite:t:`Mejia_2025` normalises them as step (v) of its weight definition, and its reference
+    implementation divides by the weight sum at point of use). That is what lets the weighted
+    means below be written as ``sum(w * x)``. Weights that do not sum to 1 need every term
+    divided by ``w.sum()`` — the general form in :cite:t:`Vollenweider_2026` — otherwise the
+    means are scaled wrongly and the correlation is not bounded to [-1, 1].
+
+    .. math::
+
+        r_w = \frac{\sum_g w_g (gt_g - \bar{gt}_w)(pred_g - \bar{pred}_w)}
+                   {\sqrt{\sum_g w_g (gt_g - \bar{gt}_w)^2 \cdot \sum_g w_g (pred_g - \bar{pred}_w)^2}}
+
+    Parameters
+    ----------
+    %(params)s
+    exp : float
+        Exponent applied to the effect-size weights (default 2.0).
+
+    Returns
+    -------
+    float
+        Weighted Pearson r in [-1, 1]; 1 is perfect. ``nan`` if either weighted variance is 0.
+    """
+    s = ctx.de(ctx.current_pert, ctx.cfg.truth, "all_perturbed").statistic
+    w = mejia_weights(s, exp=exp)
+    d_gt, d_pred = gt - np.sum(w * gt), prediction - np.sum(w * prediction)
+    var_gt, var_pred = np.sum(w * d_gt**2), np.sum(w * d_pred**2)
+    if var_gt <= 0 or var_pred <= 0:
+        return float("nan")
+    return float(np.sum(w * d_gt * d_pred) / np.sqrt(var_gt * var_pred))
+
+
+@_doc(params=_CENTROID_W)
+def weighted_r2(gt, prediction, ctx, exp=2.0):
+    r"""Coefficient of determination weighted by ground-truth effect size raised to ``exp``.
+
+    Same per-gene weights as :func:`weighted_mse`, passed straight to scikit-learn's
+    weighted :math:`R^2` — the :math:`R_w^2(\Delta)` of :cite:t:`Mejia_2025`, which
+    :cite:t:`Miller_2025` adopts as the "continuous weighting" variant of :func:`r2`.
+    Unbounded below, as :func:`r2` is.
+
+    Parameters
+    ----------
+    %(params)s
+    exp : float
+        Exponent applied to the effect-size weights (default 2.0).
+
+    Returns
+    -------
+    float
+        Weighted R² ≤ 1; 1 is perfect. ``nan`` if every weight is 0.
+    """
+    s = ctx.de(ctx.current_pert, ctx.cfg.truth, "all_perturbed").statistic
+    w = mejia_weights(s, exp=exp)
+    if w.sum() <= 0:
+        return float("nan")
+    return float(r2_score(gt, prediction, sample_weight=w))
 
 
 @_doc(params=_POPULATION)
@@ -348,6 +463,34 @@ def rank_retrieval(gt, prediction, ctx, transpose=False):
     noise = np.random.default_rng(42).uniform(0, 1e-12, size=sq.shape)
     ranks = np.argsort(np.argsort(sq + noise, axis=0), axis=0)
     return np.diag(ranks).astype(np.float64) / max(n - 1, 1)
+
+
+@_doc(params=_DATASET)
+def nir(gt, prediction, ctx):
+    r"""Normalized Inverse Rank — dataset-scope, higher is better.
+
+    Introduced by :cite:t:`Wu_2024` as the "transposed-rank" metric, and adopted under this name
+    by :cite:t:`Miller_2025`. Exactly ``1 - transpose_rank``: :func:`rank_retrieval` with
+    ``transpose=True`` (each prediction ranked among all ground-truth centroids), inverted so 1
+    is a perfect top-1 retrieval and 0 is worst. Under DRF and BDS this reparameterisation
+    cancels, so it scores identically to ``transpose_rank``; it is kept as its own metric for the
+    published name and sign convention, and because other calibrators need not be invariant to
+    it.
+
+    .. math::
+
+        \text{NIR} = 1 - \text{transpose\_rank}
+
+    Parameters
+    ----------
+    %(params)s
+
+    Returns
+    -------
+    np.ndarray
+        Per-perturbation NIR in [0, 1]; 1 is a perfect top-1 retrieval.
+    """
+    return 1.0 - rank_retrieval(gt, prediction, ctx, transpose=True)
 
 
 @_doc(params=_DE)

@@ -133,7 +133,12 @@ def cmd_list(args) -> None:
     elif args.what == "de-methods":
         lines = reg(DE_METHODS, lambda n, m: f"{n:10s} — {m.get('description', '')}")
     elif args.what == "spaces":
-        lines = reg(SPACES, lambda n, m: f"{n:10s} — {m.get('description', '')}")
+        lines = [
+            f"{s.label:19s} — {s.describe()}"
+            + (f" (default {s.default:g})" if s.parameter else "")
+            + (", per perturbation" if s.per_pert else "")
+            for s in SPACES.catalog()
+        ]
     elif args.what == "sources":
         lines = reg(SOURCES, lambda n, m: f"{n:14s} ({m.get('provides')}) — {m.get('description', '')}")
     elif args.what == "calibrators":

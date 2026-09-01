@@ -27,6 +27,19 @@ DE backends, feature spaces, control sources, and calibrators.
     Registry
 ```
 
+## Caching
+
+```{eval-rst}
+.. module:: scperteval.caching
+.. currentmodule:: scperteval.caching
+
+.. autosummary::
+    :toctree: ../generated
+
+    cached
+    DatasetScope
+```
+
 ## Feature spaces
 
 ```{eval-rst}
@@ -41,10 +54,8 @@ DE backends, feature spaces, control sources, and calibrators.
     :toctree: ../generated
 
     SPACES
-    register_de_space
-    top_space
-    pca_space
-    degs_space
+    SpaceRegistry
+    Space
 ```
 
 ## DE backends

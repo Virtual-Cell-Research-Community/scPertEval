@@ -53,6 +53,8 @@ class Registry:
 
     def meta(self, name: str) -> dict:
         """Return the metadata dict registered alongside ``name``."""
+        if name not in self._items:
+            raise KeyError(f"unknown {self.kind} {name!r}; available: {self.names()}")
         return self._items[name][1]
 
     def __contains__(self, name: str) -> bool:

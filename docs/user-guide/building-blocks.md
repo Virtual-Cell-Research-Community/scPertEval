@@ -7,20 +7,112 @@ a one-line registration. To author the protocol or metric that draws on these bl
 
 ## Add a feature space
 
-A space is a function `(X, ctx, pert) -> dense (cells × genes) array` that transforms the
-gene axis. Register it with `@SPACES.register` in
-[`src/scperteval/blocks/spaces.py`](https://github.com/Virtual-Cell-Research-Community/scPertEval/blob/main/src/scperteval/blocks/spaces.py); pass `global_space=True` if it doesn't
-depend on the perturbation (so it can be computed once and shared):
+A space decides which features a protocol scores on. Add one by writing a rule and decorating
+it, the same way DE methods and control sources are registered. Everything lives in
+[`src/scperteval/blocks/spaces/catalog.py`](https://github.com/Virtual-Cell-Research-Community/scPertEval/blob/main/src/scperteval/blocks/spaces/catalog.py):
 
 ```python
-@SPACES.register("hvg_100", global_space=True, description="100 highest-variance genes")
-def space_hvg(X, ctx, pert):
-    keep = ...  # indices of the genes to keep
-    return to_dense(X[:, keep])
+@SPACES.subset("mito", default=20, description="top {v} mitochondrial genes by control expression")
+def mito(ctx, k):
+    """The k highest-expressed mitochondrial genes."""
+    mt = np.flatnonzero([g.startswith("MT-") for g in ctx.ds.var_names])
+    return mt[np.argsort(-ctx.control_mean()[mt])][:k]
 ```
 
-For a per-perturbation subset derived from the ground-truth DE (like `top_k` / `degs`), use
-the `register_de_space(name, field=..., top=...)` helper in the same file instead.
+`mito_<k>` now appears in `scperteval list spaces`, and a protocol can use it at any `k`.
+
+**The rule** returns a column selection into the *full* gene axis — an integer array, or a
+slice — never positions into some earlier subset, so selections from different spaces can be
+folded together. It receives `(ctx, pert, value)`. The rule runs once per perturbation per
+protocol, so anything computed over the whole dataset belongs behind a `Context` cache (as
+`ctx.control_mean()` is), not recomputed here.
+
+**Name a parameter `pert` to be given the perturbation.** That is also how a space says its
+genes vary by perturbation, so scPertEval knows it can't compute the selection once and share it:
+
+```python
+def full(ctx): ...  # dataset-wide, no parameter
+def heg(ctx, k): ...  # dataset-wide, takes k
+def targets(ctx, pert): ...  # per-perturbation, no parameter
+def top(ctx, pert, k): ...  # per-perturbation, takes k
+```
+
+There is no flag to set. A rule that doesn't name `pert` is never passed one, so reaching for it
+raises `NameError` rather than silently scoring every perturbation on one panel. `pert` comes
+first when present; any other shape is rejected at registration.
+
+**The decorator** carries the metadata. `default` is the parameter value used when a caller
+doesn't supply one; `{v}` in the description is filled in with it.
+
+**Whether a space takes a parameter is read from the rule's signature.** A trailing argument
+with a default means it takes none:
+
+```python
+@SPACES.subset("perturbed_genes", description="genes targeted by a perturbation")
+def perturbed_genes(ctx):
+    return targeted_genes(ctx)  # a @cached helper in helpers.py, see below
+```
+
+`scperteval list spaces` shows `mito_<k>` and `perturbed_genes` accordingly. Declaring a
+parameter without a default (or a default without a parameter) is an error at import.
+
+**Computations over the whole dataset** go in
+[`helpers.py`](https://github.com/Virtual-Cell-Research-Community/scPertEval/blob/main/src/scperteval/blocks/spaces/helpers.py),
+decorated with `@cached` so they run once per dataset instead of once per perturbation:
+
+```python
+@cached
+def control_dispersion(scope: DatasetScope):
+    """Per-gene normalized dispersion of the control cells."""
+    ...  # scope.ds, scope.seed, scope.threads
+```
+
+Your rule then calls it as `control_dispersion(ctx)`. The body is handed a `DatasetScope`
+([`scperteval/caching.py`](https://github.com/Virtual-Cell-Research-Community/scPertEval/blob/main/src/scperteval/caching.py)) —
+the dataset plus the settings fixed at `prepare()` time — so a cached value can't accidentally
+depend on per-call options like `--de-method`, which the cache would outlive.
+
+### Composing subsets
+
+`SPACES.combine_subsets` builds a new space from registered ones with a set operation from `OPS`
+(`OPS.union`, `OPS.intersection`, `OPS.difference`, the last subtracting left to right):
+
+```python
+SPACES.combine_subsets(
+    OPS.union,
+    SPACES.instance("hvg", 8192),
+    SPACES.instance("perturbed_genes"),
+    name="perturbed_and_hvgs",
+    description="HVG union perturbed genes",
+)
+```
+
+The result is a space like any other: it appears in `scperteval list spaces`, resolves by name,
+and can itself be composed. `name` is required rather than derived, because operator-symbol names
+made `(a-b)+c` and `a-(b+c)` collide.
+
+Whether the composite varies by perturbation is **derived from its operands** — union in a
+per-perturbation space such as `top_50` and the result is per-perturbation too. Nothing to
+declare, so nothing to get wrong.
+
+### Spaces that aren't gene subsets
+
+`pca_<k>` replaces the gene axis with components instead of narrowing it, so it has no gene
+selection and can't be composed. Use `@SPACES.transform`, whose rule takes the cells and returns
+the finished array:
+
+```python
+@SPACES.transform("pca", default=50, precompute=pca_for, description="top {v} principal components")
+def pca(X, ctx, k):
+    return pca_for(ctx, k).transform(to_dense(X))[:, :k]
+```
+
+**Advanced — `precompute`.** A `@cached` helper is computed the first time a rule asks for it,
+which is inside the parallel scoring loop. For something heavy enough to want the machine's
+threads to itself — PCA, for one — pass `precompute=<callable>` so it happens before the loop
+instead. It is an optimisation only: the rule must still work if it never runs. `pca_<k>` does
+this — see `pca_for` in
+[`helpers.py`](https://github.com/Virtual-Cell-Research-Community/scPertEval/blob/main/src/scperteval/blocks/spaces/helpers.py).
 
 ## Add a DE method
 

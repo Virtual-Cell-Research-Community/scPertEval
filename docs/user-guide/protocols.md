@@ -69,7 +69,7 @@ That row is the spec; parameters include:
 | `name` | selects the protocol on the CLI (`-p mae`) |
 | `representation` | the shape of each datapoint your function receives (see below) |
 | `scope` | `"perturbation"` (default) or `"dataset"` — how many perturbations at once (see below) |
-| `space` | which features to score — `full` (default), or a feature space like `top_50` |
+| `space` | which features to score — `full` (default), or a registered space name, e.g. `SPACES.instance("top", 50)` |
 | `centering` | a centroid **source name** to subtract before scoring, e.g. `"control_mean"` or `"all_perturbed_mean"` (default: none) |
 | `default_positive` / `default_negative` | optional — declare a control default only when the row deviates from the generic default for its representation; omit otherwise (controls are resolved at runtime, see **Control sources** under [Building blocks](#building-blocks--the-palette)) |
 | `better` | `"higher"` or `"lower"` — which direction is an improvement |
@@ -117,18 +117,24 @@ The values those arguments take — feature spaces, control sources, DE methods,
 in each, with descriptions:
 
 **Feature spaces** (the `space` argument)
+These are existing spaces you may choose from. If the space you need isn't here, see
+[Add a feature space](building-blocks.md#add-a-feature-space).
 
 ```bash
 $ scperteval list spaces
-degs_0.05  — ground-truth DEGs at adjusted p < 0.05, per perturbation
-full       — all genes, no transform
-pca_50     — top 50 principal components (fit on the dataset)
-top_50     — top 50 genes by ground-truth effect size, per perturbation
+degs_<padj>         — ground-truth DEGs at adjusted p < padj (default 0.05)
+full                — all genes, no transform
+heg_<k>             — top k genes by control-condition expression (default 1000)
+hvg_<k>             — top k genes by control-condition normalized dispersion (default 2000)
+pca_<k>             — top k principal components (fit on the dataset) (default 50)
+perturbed_and_hvgs  — HVG union perturbed genes — a panel introduced in Miller et al. 2025
+perturbed_genes     — genes targeted by a perturbation in the dataset
+top_<k>             — top k genes by ground-truth effect size (default 50)
 ```
 
-`top_<k>` / `pca_<k>` / `degs_<padj>` are parameterised families (the defaults are shown);
-a protocol template picks the value. If the space you need isn't here, see
-[Add a feature space](building-blocks.md#add-a-feature-space).
+#### Space Parameters
+ A name written as `heg_<k>` takes a parameter, e.g. heg_k is designed to 
+choose the top k HEGs. In the protocol template, this value of k may be specified.
 
 **DE methods** (the `--de-method` choice)
 
@@ -204,7 +210,7 @@ Protocol("cosine", M.cosine, representation="centroid", **_PB, **_LOWER)
 top-50 DEGs:
 
 ```python
-Protocol("mae_top50", M.mae, representation="centroid", space="top_50", **_PB, **_LOWER)
+Protocol("mae_top50", M.mae, representation="centroid", space=SPACES.instance("top", 50), **_PB, **_LOWER)
 ```
 
 **Expose the space as a knob (parameterised).** To make `k` adjustable per invocation, add a
@@ -228,7 +234,9 @@ def my_mmd(gt, prediction, ctx):  # gt, prediction are (cells × genes)
 ```
 
 ```python
-Protocol("my_mmd_top50", M.my_mmd, representation="population", space="top_50", better="lower", perfect=0.0)
+Protocol(
+    "my_mmd_top50", M.my_mmd, representation="population", space=SPACES.instance("top", 50), better="lower", perfect=0.0
+)
 ```
 
 Switching `representation` to `population` does two things at once — the function now sees cells,
