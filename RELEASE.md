@@ -68,9 +68,9 @@ Implications:
 | Workflow | File | Trigger | Does |
 |---|---|---|---|
 | **Lint** | `lint.yaml` | push/PR to `main` | ruff lint + format check, mypy, pyright |
-| **Test** | `test.yaml` | push/PR to `main`, twice-monthly cron | hatch matrix on Python 3.11–3.14 (with the `sinkhorn` extra), coverage → Codecov |
+| **Test** | `test.yaml` | push/PR to `main`, twice-monthly cron | hatch matrix on Python 3.11–3.14 (with the `sinkhorn` extra), coverage → Codecov, plus a `floors` job that reinstalls every dependency at its declared lower bound |
 | **Check Build** | `build.yaml` | push/PR to `main` | `uv build` + `twine check --strict` |
-| **Notebooks** | `notebooks.yaml` | push/PR to `main` | re-executes tutorial notebooks against the current API |
+| **Notebooks** | `notebooks.yaml` | push/PR to `main` | re-executes the tutorial notebooks against the current API, skipping those needing data not present in CI (see `SKIP` in the workflow) |
 | **Release** | `release.yaml` | GitHub Release *published* | `uv build` + publish to PyPI via Trusted Publishing |
 
 The **required status checks** for merging into `main` (set in branch protection) are the job
@@ -127,7 +127,7 @@ Configured under **Settings → Rules → Rulesets**:
   check (Dependabot already covers this):
 
   ```bash
-  uv export --no-dev --format requirements-txt | uvx pip-audit -r -
+  VIRTUAL_ENV=.venv uv run --with pip-audit --no-project pip-audit
   ```
 
 ---
