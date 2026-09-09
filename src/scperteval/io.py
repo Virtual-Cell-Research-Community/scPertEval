@@ -80,6 +80,20 @@ def write_rows(cfg, rows: list, timestamp: str) -> Path:
     return path
 
 
+def write_compare(cfg, protocol: str, frame: pd.DataFrame, timestamp: str) -> Path:
+    """Write a :func:`~scperteval.api.compare` matrix (queries x references) to a timestamped CSV.
+
+    The protocol goes in the filename, as it does for a single-protocol :func:`write_rows`, so
+    per-protocol calls into one ``out_dir`` don't collide. The index is kept: it carries the query
+    labels, which are not otherwise recoverable from the file.
+    """
+    out_dir = Path(cfg.out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    path = out_dir / f"{Path(cfg.dataset).stem}__{protocol}__{timestamp}__compare.csv"
+    frame.to_csv(path, index=True)
+    return path
+
+
 def _write_timing(cfg, timed: list, timestamp: str) -> Path:
     """Write per-protocol wall-clock seconds (one row per protocol)."""
     out_dir = Path(cfg.out_dir)
