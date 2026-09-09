@@ -2,6 +2,51 @@
 
 ## Unreleased
 
+## 0.2.0
+
+### Added
+
+- 16 protocols reproducing the Miller et al. 2025 and Ahlmann-Eltze et al. 2025 evaluations, on
+  five new metrics (`r2`, `l2`, `weighted_pearson`, `weighted_r2`, `nir`) — 38 protocols in total,
+  up from 22. Run `scperteval list protocols` for the catalog.
+- Four gene-subset spaces: `heg_<k>` (highest-expressed), `hvg_<k>` (most variable),
+  `perturbed_genes` (genes a perturbation targets), and `perturbed_and_hvgs`.
+- `SPACES.combine_subsets(op, *names, name=...)` builds a space from existing subsets by union,
+  intersection, or difference.
+- `@cached` and `DatasetScope` in `scperteval.caching`, for computing a dataset-level value once
+  per prepared dataset.
+- A Model Benchmark tutorial walking through a full evaluation with the package.
+
+### Changed — results may differ
+
+- `pearson_pert`, `pearson_pert_top_k` and `pearson_pert_degs_padj` now score against the mean of
+  *all* control cells rather than a capped random subsample, so their values shift slightly from
+  v 0.1.0 on datasets holding more than `--subsample` controls.
+
+### Feature spaces — breaking (Python API only; the CLI is unaffected)
+
+Spaces moved to `scperteval.blocks.spaces`, a package whose `catalog.py` holds every space as one
+decorated rule — that file is where you add your own. Anyone who wrote or modified a space needs
+to update it; running the CLI is unaffected.
+
+- The per-space factories are gone: use `SPACES.instance("top", 50)` in place of `top_space(50)`,
+  and likewise for `degs_space` / `pca_space`. `register_de_space` is removed, and `Context.pca(k)`
+  becomes `pca_for(ctx, k)` from `scperteval.blocks.spaces.helpers`. See docs.
+- A `Protocol` must name a space that exists: `space=SPACES.instance("top", 50)`, not
+  `space="top_50"`. See docs.
+- Define a space with `@SPACES.subset` or `@SPACES.transform` rather than `@SPACES.register`; add
+  a `pert` argument to the signature if it will vary per perturbation. The following signatures are
+  all valid:
+  `(ctx)`, `(ctx, k)`, `(ctx, pert)`, `(ctx, pert, k)`.
+- A space parameter must be a positive number, negative values can have unintended behavior depending
+  on space implementation, and are no longer supported.
+- A space that selects no genes now raises instead of scoring `nan`.
+
+### Housekeeping
+
+`scperteval list spaces` more accurately reflects the existing spaces and how to use them;
+citation and docstring corrections.
+
 ## 0.1.0
 
 First release of scPertEval — reference implementations of single-cell perturbation evaluation
