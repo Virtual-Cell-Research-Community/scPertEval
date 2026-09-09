@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+### Performance
+
+- Each perturbation's un-centred pseudobulk is now computed once per prepared handle instead of
+  once per `view()`, so scoring many predictions against one handle no longer rebuilds the same
+  ground-truth profiles on every call. Results are unchanged (bit-identical).
+- `PredictionSet` builds its perturbation-to-rows map once, and skips the gene-column gather
+  entirely when the prediction file is already in the dataset's gene order.
+- `prepare()` now lifts the import-time BLAS thread pin around its warm-up, as `run_all` already
+  did, so the PCA fit is no longer single-threaded.
+
+### Changed
+
+- `prepare()` raises when `min_cells` filters out every perturbation, naming the limit and the
+  largest perturbation available. Previously it returned a handle with 0 perturbations and the
+  failure surfaced later as a bare `KeyError` from an empty result frame.
+
 ## 0.1.0
 
 First release of scPertEval — reference implementations of single-cell perturbation evaluation
