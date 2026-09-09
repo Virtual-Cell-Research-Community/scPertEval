@@ -91,7 +91,7 @@ def test_gene_order_is_aligned_for_anndata(prep, dataset_adata):
 
 @pytest.mark.parametrize("protocol", REPRESENTATIVE)
 def test_every_representation_retrieves_its_own_reference(prep, protocol):
-    """An undamaged query ranks its own reference first, whatever the representation."""
+    """A query taken straight from the handle scores best against its own reference."""
     row = sp.compare(prep, protocol, "pertA").loc["pertA"]
     better = max if sp.api._single_protocol(protocol).better == "higher" else min
     assert better(row.items(), key=lambda kv: kv[1])[0] == "pertA"

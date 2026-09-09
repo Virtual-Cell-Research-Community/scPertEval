@@ -601,8 +601,8 @@ def compare(
 
     .. code-block:: python
 
-        row = sp.compare(prep, "pearson_ctrl", damaged_cells, query_origin="ATXN7L3")
-        rank = row.rank(axis=1, ascending=False)["ATXN7L3"]  # where its own reference landed
+        row = sp.compare(prep, "pearson_ctrl", query_cells, query_origin="ATXN7L3")
+        closest = row.iloc[0].idxmax()  # the reference this population most resembles
 
     Parameters
     ----------
