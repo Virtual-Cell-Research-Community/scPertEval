@@ -84,7 +84,7 @@ def test_every_representation_runs(prep, registered, protocol):
 
 
 def test_repr_counts_queries_not_perturbations(prep, registered):
-    assert "querys=1" in repr(sp.cross_calibrate(prep, "mse", ["pertA"], calibrator="_count"))
+    assert "queries=1" in repr(sp.cross_calibrate(prep, "mse", ["pertA"], calibrator="_count"))
 
 
 # --- the calibrator sees the values, keyed by reference -----------------------

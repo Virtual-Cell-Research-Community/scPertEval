@@ -78,10 +78,12 @@ class EvalResult:
     def __repr__(self) -> str:
         # Cross-paired results are one row per query rather than per perturbation, so the unit
         # column differs; report whichever this frame carries rather than a misleading zero.
-        unit = "perturbation" if "perturbation" in self.per_perturbation else "query"
+        unit, plural = (
+            ("perturbation", "perturbations") if "perturbation" in self.per_perturbation else ("query", "queries")
+        )
         col = self.per_perturbation.get(unit)
         n = col.nunique() if col is not None else 0
-        return f"EvalResult(aggregate={self.aggregate}, {unit}s={n})"
+        return f"EvalResult(aggregate={self.aggregate}, {plural}={n})"
 
 
 class DatasetDEResults(NamedTuple):
