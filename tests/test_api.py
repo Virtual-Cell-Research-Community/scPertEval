@@ -31,6 +31,7 @@ def test_public_surface():
         "Prepared",
         "__version__",
         "calibrate",
+        "compare",
         "de",
         "prepare",
         "score",

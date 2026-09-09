@@ -2,6 +2,26 @@
 
 ## Unreleased
 
+### Features
+
+- **`compare()`** — a new verb that scores one or more query cell populations against *every*
+  reference perturbation in a prepared handle, returning a queries × references DataFrame. Where
+  `score()` pairs truth and prediction strictly by label, `compare()` answers "how does this
+  population compare to every reference?", so retrieval-style analyses no longer have to encode
+  the question in the data by replicating one query under every reference label. Queries may be
+  perturbation names from the handle, a 2-D array, or a labelled AnnData; `references` selects and
+  orders the columns.
+- `compare(query_origin=...)` names the perturbation a query's cells came from, so the
+  all-perturbed sample its DE is computed against never contains the query itself — the
+  leave-one-out rule `score()` gets for free, which cross-label pairing would otherwise apply to
+  the reference instead.
+
+### Documentation
+
+- New [Known limitations](https://scperteval.readthedocs.io/en/latest/user-guide/limitations.html)
+  page, covering why per-perturbation feature spaces (`top_k`, `degs`) leave the values along a
+  `compare()` row on different scales, and what to do about it.
+
 ## 0.1.0
 
 First release of scPertEval — reference implementations of single-cell perturbation evaluation

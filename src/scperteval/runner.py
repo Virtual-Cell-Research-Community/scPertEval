@@ -203,6 +203,58 @@ def _run_dataset(p: Protocol, ctx, calibrator: Calibrator, needed: dict):
     return agg, rows, seconds
 
 
+def run_compare(p: Protocol, ctx, query: str, origin: str | None, references: list[str]) -> list[float]:
+    """Score one query population against every reference perturbation (the cross-comparison path).
+
+    Unlike :func:`run_protocol`, the two sides of a comparison are *different* perturbations. The
+    query is a call-scoped source holding an already-reduced datapoint; each reference contributes
+    its own ground-truth view, **in its own feature space** — so a per-perturbation space
+    (``top_k``, ``degs``) is fit on the reference, and both sides are judged on those genes. See
+    :doc:`/user-guide/limitations` for what that costs in cross-reference comparability.
+
+    Parameters
+    ----------
+    p : ~scperteval.types.Protocol
+        The concrete protocol to evaluate.
+    ctx : ~scperteval.context.Context
+        Per-call context whose user sources include ``query``.
+    query : str
+        Source name the query's datapoint is registered under.
+    origin : str or None
+        Perturbation the query's cells came from. Excluded from the all-perturbed sample the
+        query's DE is computed against, so that sample never contains the query itself; ``None``
+        excludes nothing. Only DE protocols read it.
+    references : list of str
+        Perturbations to score against, in output order.
+
+    Returns
+    -------
+    list of float
+        One value per reference, in ``references`` order.
+    """
+    if p.scope == "dataset":
+        raise ValueError(
+            f"{p.name!r} is a dataset-scope protocol: it scores every perturbation at once against "
+            f"its own counterpart, so it has no one-query-against-one-reference reading. Use a "
+            f"perturbation-scope protocol with compare(), or run this one through score()."
+        )
+    # A DE view is the query's own |statistic| ranking, which the reference never enters, so it is
+    # computed once here -- against the all-perturbed sample minus `origin` -- and reused for every
+    # reference. Centroid and population views must be rebuilt per reference: their feature space
+    # (and centering baseline) is the reference's.
+    fixed = ctx.view(origin, query, p) if p.representation == "de" else None
+
+    def work(ref):
+        # Thread-local, and read by the weighted metrics and the per-perturbation spaces: it is how
+        # they learn which perturbation's DE defines the weights/panel for this comparison.
+        ctx.current_pert = ref
+        gt = ctx.view(ref, ctx.cfg.truth, p)
+        return float(p.metric(gt, fixed if fixed is not None else ctx.view(ref, query, p), ctx))
+
+    with ThreadPoolExecutor(max_workers=_n_workers(ctx.cfg)) as pool:
+        return list(pool.map(work, references))
+
+
 def compute_de(ctx):
     """Per-gene DE matrices for ``ctx.cfg.de_method``, for export.
 

@@ -2,8 +2,8 @@
 
 Usage is always **prepare, then run**: build a reusable :func:`prepare` handle for a dataset (read
 + index once, precompute the declared protocols' spaces), then call :func:`calibrate` /
-:func:`score` / :func:`de` on that handle — each evaluates a single protocol or DE method and
-returns in-memory results (pandas). Many calls share the handle's dataset and caches (no reload),
+:func:`score` / :func:`compare` / :func:`de` on that handle — each evaluates a single protocol or
+DE method and returns in-memory results (pandas). Many calls share the handle's dataset and caches (no reload),
 and are safe to run concurrently: each call builds its own lightweight context over the shared,
 thread-safe cache, so nothing is mutated across calls.
 
@@ -19,14 +19,15 @@ from typing import TYPE_CHECKING, Literal, NamedTuple
 
 import numpy as np
 import pandas as pd
+from threadpoolctl import threadpool_limits
 
 from . import io
 from .blocks.de import DE_METHODS
 from .context import CacheStore, Context
-from .dataset import Dataset
+from .dataset import Dataset, to_dense
 from .predictions import PredictionSet
 from .protocols.resolve import resolve_protocols
-from .runner import compute_de, run_all
+from .runner import _n_workers, compute_de, run_all, run_compare
 from .sources import SOURCES
 from .types import Protocol, RunConfig
 
@@ -40,6 +41,7 @@ __all__ = [
     "EvalResult",
     "Prepared",
     "calibrate",
+    "compare",
     "de",
     "prepare",
     "score",
@@ -97,8 +99,8 @@ class Prepared:
     """A reusable, prepared dataset: build once with :func:`prepare`, pass to many verb calls.
 
     Holds the read-and-indexed dataset (resident in memory), a shared thread-safe cache, and the
-    immutable prepare-time configuration. Each :func:`calibrate` / :func:`score` / :func:`de` call
-    builds its own lightweight context over this handle, so the handle itself is never mutated —
+    immutable prepare-time configuration. Each :func:`calibrate` / :func:`score` / :func:`compare`
+    / :func:`de` call builds its own lightweight context over this handle, so the handle itself is never mutated —
     sequential *and* concurrent calls against one handle are safe. Treat it as opaque; its
     internals are not part of the public API.
     """
@@ -117,9 +119,15 @@ class Prepared:
         self._cfg = cfg
         self._sources = sources or {}  # per-handle runtime user sources ({name: (callable, meta)})
 
-    def _run_context(self, **overrides) -> Context:
-        """A fresh per-call context sharing this handle's dataset + cache, with per-call config."""
-        return Context(self._ds, replace(self._cfg, **overrides), store=self._store, user_sources=self._sources)
+    def _run_context(self, *, sources=None, **overrides) -> Context:
+        """A fresh per-call context sharing this handle's dataset + cache, with per-call config.
+
+        ``sources`` adds *call-scoped* user sources on top of the handle's (the :func:`compare`
+        query). They live on the context, never on the handle, so one call's query cannot leak
+        into another's.
+        """
+        merged = {**self._sources, **sources} if sources else self._sources
+        return Context(self._ds, replace(self._cfg, **overrides), store=self._store, user_sources=merged)
 
     def __repr__(self) -> str:
         return f"Prepared(name={Path(self._cfg.dataset).stem!r}, perturbations={len(self._ds.perturbations)})"
@@ -192,6 +200,11 @@ def _const_source(array: np.ndarray):
     return fn
 
 
+#: Source name :func:`compare` registers its query under, for the length of one call. Reserved so a
+#: user source cannot be silently shadowed by it.
+_QUERY_SOURCE = "_compare_query"
+
+
 def _validate_sources(sources, ds: Dataset) -> dict[str, tuple[Callable, dict]]:
     """Validate + register the ``prepare(sources=...)`` user sources for one handle.
 
@@ -207,6 +220,8 @@ def _validate_sources(sources, ds: Dataset) -> dict[str, tuple[Callable, dict]]:
     for name, array in sources.items():
         if name == "auto":
             raise ValueError("user source name 'auto' is reserved (the control-override sentinel); rename it")
+        if name == _QUERY_SOURCE:
+            raise ValueError(f"user source name {_QUERY_SOURCE!r} is reserved (compare()'s query); rename it")
         if name in SOURCES:
             raise ValueError(
                 f"user source {name!r} shadows a built-in source ({', '.join(SOURCES.names())}); rename it"
@@ -259,6 +274,125 @@ def _apply_center_on(proto: Protocol, center_on: str, ctx: Context) -> Protocol:
             f"center_on source {center_on!r} provides {provides!r}, but a centering baseline must be a centroid (1-D)"
         )
     return replace(proto, centering=center_on, name=f"{proto.name}_center_{center_on}")
+
+
+# --------------------------------------------------------------------------- compare() helpers
+
+
+def _query_cells(array, n_genes: int, label: str) -> np.ndarray:
+    """Validate one query's cells and return them as a contiguous ``float64`` ``(n, G)`` array."""
+    cells = np.asarray(to_dense(array))
+    if cells.ndim != 2:
+        raise ValueError(f"query {label!r} must be a 2-D (cells, genes) array, got shape {cells.shape}")
+    if cells.shape[0] == 0:
+        raise ValueError(f"query {label!r} has no cells")
+    if cells.shape[1] != n_genes:
+        raise ValueError(
+            f"query {label!r} has {cells.shape[1]} genes but the dataset has {n_genes}; "
+            f"columns must be in adata.var_names order"
+        )
+    if not np.isfinite(cells).all():
+        raise ValueError(f"query {label!r} has non-finite values (NaN/inf); all entries must be finite")
+    return np.array(cells, dtype=np.float64, order="C")
+
+
+def _resolve_references(ds: Dataset, references) -> list[str]:
+    """The reference perturbations to score against; ``None`` means every one in the handle."""
+    if references is None:
+        return [str(p) for p in ds.perturbations]  # plain str: ds.perturbations holds numpy strings
+    refs = [str(references)] if isinstance(references, str) else [str(r) for r in references]
+    if not refs:
+        raise ValueError("references is empty; omit it to score against every perturbation in the handle")
+    unknown = [r for r in refs if r not in set(ds.perturbations)]
+    if unknown:
+        shown = ", ".join(map(repr, unknown[:10])) + (f", … (+{len(unknown) - 10} more)" if len(unknown) > 10 else "")
+        raise ValueError(
+            f"references not in the prepared dataset: {shown}. The handle holds "
+            f"{len(ds.perturbations)} perturbations (min_cells may have dropped some)."
+        )
+    return refs
+
+
+def _resolve_origins(labels, query_origin, defaults, known) -> dict[str, str | None]:
+    """Map each query label to the perturbation its cells came from (``None`` = exclude nothing)."""
+    if query_origin is None:
+        origins = dict(defaults)
+    elif isinstance(query_origin, str):
+        if len(labels) != 1:
+            raise ValueError(
+                f"query_origin={query_origin!r} names one perturbation but there are {len(labels)} "
+                f"queries; pass a {{query: origin}} mapping instead"
+            )
+        origins = {labels[0]: query_origin}
+    elif isinstance(query_origin, dict):
+        stray = [k for k in query_origin if k not in set(labels)]
+        if stray:
+            raise ValueError(f"query_origin names queries that were not passed: {', '.join(map(repr, stray))}")
+        origins = {lab: query_origin.get(lab, defaults[lab]) for lab in labels}
+    else:
+        raise TypeError(
+            f"query_origin must be a perturbation name, a {{query: origin}} dict, or None, "
+            f"not {type(query_origin).__name__}"
+        )
+    missing = sorted({o for o in origins.values() if o is not None and o not in known})
+    if missing:
+        raise ValueError(
+            f"query_origin {', '.join(map(repr, missing))} is not a perturbation in the prepared "
+            f"dataset, so it would exclude nothing. Pass a name the handle holds, or None."
+        )
+    return origins
+
+
+def _resolve_queries(queries, ds: Dataset, cfg: RunConfig, query_origin) -> list[tuple[str, np.ndarray, str | None]]:
+    """Normalise the ``queries`` argument to ``[(label, cells, origin), …]``.
+
+    Three input forms (see :func:`compare`). A query that carries a perturbation name the handle
+    holds — a name from ``queries``, or an AnnData label that matches one — defaults to that name
+    as its origin, since its cells came from there; a bare array defaults to no origin.
+    """
+    n_genes, known = len(ds.var_names), {str(p) for p in ds.perturbations}
+
+    if isinstance(queries, str):
+        queries = [queries]
+    if isinstance(queries, (list, tuple)):
+        names = list(queries)
+        if not names:
+            raise ValueError("queries is empty; pass a perturbation name, a list of names, or a cell population")
+        bad = [q for q in names if not isinstance(q, str)]
+        if bad:
+            raise TypeError(
+                f"a list of queries names perturbations in the prepared dataset (strings); got "
+                f"{type(bad[0]).__name__}. Pass a single 2-D array, or an AnnData, for external cells."
+            )
+        unknown = [q for q in names if q not in known]
+        if unknown:
+            raise ValueError(f"queries not in the prepared dataset: {', '.join(map(repr, unknown))}")
+        pairs = [(q, _query_cells(ds.cells(q), n_genes, q)) for q in names]
+        defaults = {q: q for q in names}
+    elif hasattr(queries, "obs"):  # an AnnData: one query per label, gene-aligned by name
+        pset = PredictionSet(queries, ds, cfg)
+        labels = list(dict.fromkeys(map(str, pset.pert)))  # first-appearance order, so the caller's survives
+        pairs = [(lab, _query_cells(pset.cells(lab), n_genes, lab)) for lab in labels]
+        defaults = {lab: (lab if lab in known else None) for lab in labels}
+    else:  # a bare (cells, genes) array — one anonymous query
+        pairs = [("query", _query_cells(queries, n_genes, "query"))]
+        defaults = {"query": None}
+
+    origins = _resolve_origins([lab for lab, _ in pairs], query_origin, defaults, known)
+    return [(lab, cells, origins[lab]) for lab, cells in pairs]
+
+
+def _query_source(cells: np.ndarray, proto: Protocol) -> tuple[Callable, dict]:
+    """Register one query's *already reduced* datapoint as a call-scoped source.
+
+    The reduction happens once, here, instead of once per reference: a centroid protocol is handed
+    the query's pseudobulk (leaving :meth:`~scperteval.context.Context.centroid` nothing to
+    average), everything else its cells. Non-cacheable, so nothing derived from a query is ever
+    written to the handle's shared cache.
+    """
+    if proto.representation == "centroid":
+        return _const_source(cells.mean(0)), {"provides": "centroid", "cacheable": False}
+    return _const_source(cells), {"provides": "cells", "cacheable": False}
 
 
 # --------------------------------------------------------------------------- public functions
@@ -445,6 +579,112 @@ def score(
     if out_dir is not None:
         io.write_rows(ctx.cfg, rows, _stamp())
     return EvalResult(aggregate=aggregates[proto.name], per_perturbation=io.rows_frame(ctx.cfg, rows))
+
+
+def compare(
+    prepared: Prepared,
+    protocol: str,
+    queries: str | list[str] | np.ndarray | AnnData,
+    *,
+    references: str | list[str] | None = None,
+    query_origin: str | dict[str, str] | None = None,
+    de_method: DEMethodName = "t-test",
+    center_on: str | None = None,
+) -> pd.DataFrame:
+    """Score one or more query cell populations against **every** reference perturbation.
+
+    Where :func:`score` pairs truth and prediction strictly by label — *"my model predicted this
+    for perturbation X, how good is it?"* — this asks *"how does this population compare to every
+    reference?"*, and returns the whole row. The query is passed once, however many references it
+    is scored against.
+
+    .. code-block:: python
+
+        row = sp.compare(prep, "pearson_ctrl", damaged_cells, query_origin="ATXN7L3")
+        rank = row.rank(axis=1, ascending=False)["ATXN7L3"]  # where its own reference landed
+
+    Parameters
+    ----------
+    prepared : Prepared
+        A handle from :func:`prepare` — the reference library.
+    protocol : str
+        A single protocol spec (see :func:`calibrate`). Dataset-scope protocols (``rank``,
+        ``transpose_rank``, ``nir``) are rejected: they score every perturbation at once against
+        its own counterpart, so they have no one-query-against-one-reference reading.
+    queries : str or list of str or numpy.ndarray or anndata.AnnData
+        What to compare. One of:
+
+        - a perturbation name, or a list of them, already in the handle — that perturbation's own
+          cells become the query;
+        - a 2-D ``(cells, genes)`` array of externally built cells — one query, labelled
+          ``"query"``. Columns are assumed to be in ``adata.var_names`` order; as with
+          ``prepare(sources=...)``, the gene *count* is checked but the *order* cannot be;
+        - an AnnData with the dataset's perturbation column — one query per label, gene-aligned
+          by name.
+
+    references : str or list of str, optional
+        Perturbations to score against, in output order. Defaults to every perturbation in the
+        handle.
+    query_origin : str or dict, optional
+        The perturbation a query's cells came from. It is excluded from the all-perturbed sample
+        the query's **DE** is computed against, so that sample never contains the query itself —
+        the same leave-one-out rule :func:`score` gets for free, which cross-label pairing would
+        otherwise apply to the reference instead. Pass a name (single query) or a
+        ``{query: origin}`` mapping. Queries named from the handle, and AnnData labels matching a
+        perturbation, default to their own name; a bare array defaults to ``None`` (exclude
+        nothing), which is right for a genuinely external population such as a model prediction.
+        Only DE protocols read it.
+    de_method : str, optional
+        DE backend for any DE-dependent part of the protocol (default ``"t-test"``).
+    center_on : str, optional
+        Center on a named centroid source's baseline (see :func:`calibrate`). The baseline is the
+        *reference's*, as the feature space is.
+
+    Returns
+    -------
+    pandas.DataFrame
+        Raw protocol values, one row per query and one column per reference.
+
+    Notes
+    -----
+    The feature space is a property of the **reference**: a per-perturbation space (``top_k``,
+    ``degs``) is fit on the reference and both sides of the comparison are judged on those genes,
+    so each column of a row is computed in a different space. Values along a row are therefore not
+    on a common scale — see :doc:`/user-guide/limitations` before ranking them.
+
+    Each query is reduced once per call and each reference profile is cached on the handle, so
+    scoring many queries against one prepared dataset does the reduction work once.
+
+    See Also
+    --------
+    score : Same-label scoring of model predictions.
+    """
+    _require_prepared(prepared, "compare")
+    _check_de_method(de_method)
+    proto = _single_protocol(protocol)
+    refs = _resolve_references(prepared._ds, references)
+    resolved = _resolve_queries(queries, prepared._ds, prepared._cfg, query_origin)
+    overrides = dict(protocols=[proto.name], de_method=de_method, calibrator="score", truth="gt_all_cells")
+
+    ctx = prepared._run_context(**overrides)
+    if center_on is not None:
+        proto = _apply_center_on(proto, center_on, ctx)
+        overrides["protocols"] = [proto.name]
+    # Warm once for the whole call with BLAS free to use every thread, as run_all does. The
+    # per-query contexts below share this handle's cache, so they only ever hit it.
+    with threadpool_limits(limits=_n_workers(ctx.cfg)):
+        ctx.warm([proto])
+
+    rows = []
+    for _, cells, origin in resolved:
+        # One context per query, each carrying only its own query source — so a multi-query call
+        # cannot leak one query's cells into another's comparison.
+        qctx = prepared._run_context(sources={_QUERY_SOURCE: _query_source(cells, proto)}, **overrides)
+        rows.append(run_compare(proto, qctx, _QUERY_SOURCE, origin, refs))
+
+    frame = pd.DataFrame(rows, index=[label for label, _, _ in resolved], columns=refs, dtype=float)
+    frame.index.name, frame.columns.name = "query", "reference"
+    return frame
 
 
 def de(

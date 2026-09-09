@@ -16,6 +16,7 @@ The public functions for using scPertEval from Python, re-exported at the packag
     prepare
     calibrate
     score
+    compare
     de
 ```
 
