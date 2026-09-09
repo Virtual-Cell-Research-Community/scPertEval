@@ -19,6 +19,7 @@ from typing import TYPE_CHECKING, Literal, NamedTuple
 
 import numpy as np
 import pandas as pd
+from threadpoolctl import threadpool_limits
 
 from . import io
 from .blocks.de import DE_METHODS
@@ -26,7 +27,7 @@ from .context import CacheStore, Context
 from .dataset import Dataset
 from .predictions import PredictionSet
 from .protocols.resolve import resolve_protocols
-from .runner import compute_de, run_all
+from .runner import _n_workers, compute_de, run_all
 from .sources import SOURCES
 from .types import Protocol, RunConfig
 
@@ -328,7 +329,10 @@ def prepare(
     ds = _to_dataset(dataset, cfg)
     user_sources = _validate_sources(sources, ds)  # fail fast on bad user sources, before warming
     ctx = Context(ds, cfg)
-    ctx.warm(protos)  # precompute declared spaces + reference (method-independent); no DE
+    # Same reasoning as `run_all`: nothing else is running yet to oversubscribe, so the warm-up
+    # (notably the PCA fit) gets every worker thread instead of the import-time pin of 1.
+    with threadpool_limits(limits=_n_workers(cfg)):
+        ctx.warm(protos)  # precompute declared spaces + reference (method-independent); no DE
     return Prepared(ctx.ds, ctx._store, cfg, user_sources)
 
 
