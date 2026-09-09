@@ -15,6 +15,8 @@
   all-perturbed sample its DE is computed against never contains the query itself — the
   leave-one-out rule `score()` gets for free, which cross-label pairing would otherwise apply to
   the reference instead.
+- `compare(out_dir=...)` writes the matrix to a timestamped CSV, matching `calibrate()`,
+  `score()` and `de()`.
 
 ### Documentation
 

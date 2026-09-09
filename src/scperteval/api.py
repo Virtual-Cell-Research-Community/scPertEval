@@ -590,6 +590,7 @@ def compare(
     query_origin: str | dict[str, str] | None = None,
     de_method: DEMethodName = "t-test",
     center_on: str | None = None,
+    out_dir: str | Path | None = None,
 ) -> pd.DataFrame:
     """Score one or more query cell populations against **every** reference perturbation.
 
@@ -639,6 +640,9 @@ def compare(
     center_on : str, optional
         Center on a named centroid source's baseline (see :func:`calibrate`). The baseline is the
         *reference's*, as the feature space is.
+    out_dir : str or pathlib.Path, optional
+        If given, also write the matrix there as a CSV (as the other verbs do), keeping the query
+        labels as the index.
 
     Returns
     -------
@@ -664,7 +668,13 @@ def compare(
     proto = _single_protocol(protocol)
     refs = _resolve_references(prepared._ds, references)
     resolved = _resolve_queries(queries, prepared._ds, prepared._cfg, query_origin)
-    overrides = dict(protocols=[proto.name], de_method=de_method, calibrator="score", truth="gt_all_cells")
+    overrides = dict(
+        protocols=[proto.name],
+        de_method=de_method,
+        calibrator="score",
+        truth="gt_all_cells",
+        out_dir=str(out_dir) if out_dir is not None else "results",
+    )
 
     ctx = prepared._run_context(**overrides)
     if center_on is not None:
@@ -684,6 +694,10 @@ def compare(
 
     frame = pd.DataFrame(rows, index=[label for label, _, _ in resolved], columns=refs, dtype=float)
     frame.index.name, frame.columns.name = "query", "reference"
+    if out_dir is not None:
+        # `proto.name`, not `cfg.protocols`: a `center_on` variant is minted after the context is
+        # built, so the protocol object is the only place the final name is certain to be right.
+        io.write_compare(ctx.cfg, proto.name, frame, _stamp())
     return frame
 
 

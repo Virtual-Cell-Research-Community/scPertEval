@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import anndata as ad
 import numpy as np
+import pandas as pd
 import pytest
 
 import scperteval as sp
@@ -279,3 +280,35 @@ def test_center_on_mints_the_variant(prep, dataset_adata):
     frame = sp.compare(prepared, "pearson", "pertA", center_on="myvec")
     assert frame.shape == (1, len(prepared._ds.perturbations))
     assert not np.allclose(frame.to_numpy(), sp.compare(prepared, "pearson", "pertA").to_numpy())
+
+
+# --- out_dir ------------------------------------------------------------------
+
+
+def test_out_dir_writes_the_matrix_round_trip(prep, tmp_path):
+    """The CSV must reproduce the returned frame, query labels included."""
+    frame = sp.compare(prep, "pearson_ctrl", ["pertA", "pertB"], out_dir=str(tmp_path))
+    written = list(tmp_path.glob("*__compare.csv"))
+    assert len(written) == 1
+    back = pd.read_csv(written[0], index_col=0)
+    assert list(back.index) == list(frame.index)
+    assert list(back.columns) == list(frame.columns)
+    np.testing.assert_allclose(back.to_numpy(), frame.to_numpy())
+
+
+def test_out_dir_no_collision_across_protocols(prep, tmp_path):
+    sp.compare(prep, "mse", "pertA", out_dir=str(tmp_path))
+    sp.compare(prep, "pearson_ctrl", "pertA", out_dir=str(tmp_path))
+    assert len(list(tmp_path.glob("*__compare.csv"))) == 2
+
+
+def test_out_dir_records_the_center_on_variant(prep, dataset_adata, tmp_path):
+    """A minted `center_on` variant must reach the filename, not the base protocol name."""
+    prepared = sp.prepare(dataset_adata, "all", sources={"myvec": np.asarray(dataset_adata.X).mean(0)}, **PREP)
+    sp.compare(prepared, "pearson", "pertA", center_on="myvec", out_dir=str(tmp_path))
+    assert list(tmp_path.glob("*pearson_center_myvec*__compare.csv"))
+
+
+def test_no_out_dir_writes_nothing(prep, tmp_path):
+    sp.compare(prep, "mse", "pertA")
+    assert list(tmp_path.iterdir()) == []
