@@ -32,6 +32,7 @@ def test_public_surface():
         "__version__",
         "calibrate",
         "compare",
+        "cross_calibrate",
         "de",
         "prepare",
         "score",

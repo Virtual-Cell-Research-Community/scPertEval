@@ -18,7 +18,7 @@ api/io
 :link: api/api
 :link-type: doc
 
-The public functions: `prepare`, `calibrate`, `score`, `compare`, `de`, and their result types
+The public functions: `prepare`, `calibrate`, `score`, `compare`, `cross_calibrate`, `de`, and their result types
 `Prepared` / `EvalResult` / `DatasetDEResults`.
 :::
 

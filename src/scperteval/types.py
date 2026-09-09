@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field, replace
 from functools import partial
 
@@ -165,6 +165,38 @@ class Protocol:
         return replace(self, name=name, metric=metric, param=None)
 
 
+class CrossRow(Mapping):
+    """One unit's protocol values, keyed by the perturbation each was scored against.
+
+    What a ``pairing="cross"`` calibrator receives in the ``raws`` slot, in place of the
+    ``{candidate: value}`` dict a same-label calibrator gets. It is a read-only mapping
+    (``row["pertA"]``, ``dict(row)``, ``row.values()``) plus one attribute, :attr:`target`, so a
+    reduction that has to locate the unit's own counterpart among the rest can find it without
+    changing ``per_pert``'s arity.
+    """
+
+    __slots__ = ("_by_reference", "target")
+
+    def __init__(self, by_reference: Mapping[str, float], target: str | None = None):
+        self._by_reference = dict(by_reference)
+        #: The reference this unit's own datapoint came from, or ``None`` when it has no
+        #: counterpart among them. Never assume it is a key: the caller may have scored against
+        #: references that exclude it.
+        self.target = target
+
+    def __getitem__(self, reference: str) -> float:
+        return self._by_reference[reference]
+
+    def __iter__(self):
+        return iter(self._by_reference)
+
+    def __len__(self) -> int:
+        return len(self._by_reference)
+
+    def __repr__(self) -> str:
+        return f"CrossRow(target={self.target!r}, references={len(self._by_reference)})"
+
+
 @dataclass(frozen=True)
 class Calibrator:
     """Turns per-control raw metric values into per-perturbation and aggregate scores."""
@@ -172,10 +204,22 @@ class Calibrator:
     #: Registry key and output column name (e.g. ``"drf"``).
     name: str
     #: Calibrator inputs (candidate names) it needs — e.g. ``("positive", "negative")``.
+    #: Read only under ``pairing="same-label"``; a cross calibrator is handed every reference.
     requires: tuple[str, ...]
-    #: ``(raws: dict, protocol: Protocol) -> float`` — combines raw control values into one per-perturbation calibrated score.
+    #: ``(raws, protocol: Protocol) -> float`` — combines raw values into one per-unit calibrated
+    #: score. ``raws`` is a ``{candidate: value}`` dict under ``pairing="same-label"`` and a
+    #: :class:`CrossRow` under ``pairing="cross"``; the arity is the same either way.
     per_pert: Callable
     #: ``(values: numpy.ndarray) -> dict`` — reduces per-perturbation scores into summary statistics (e.g. ``{"mean": …, "median": …}``).
     aggregate: Callable
     #: Human-readable description shown by ``scperteval list calibrators``.
     description: str = ""
+    #: How the two sides of each comparison are paired, which selects the execution path:
+    #:
+    #: - ``"same-label"`` (default) — both sides are the same perturbation, compared against the
+    #:   candidate sources named in ``requires``. Every built-in calibrator is one of these.
+    #: - ``"cross"`` — one unit is scored against *many* perturbations, and ``per_pert`` reduces
+    #:   the resulting :class:`CrossRow`.
+    #:
+    #: The verbs enforce the match, so a calibrator cannot be run down a path it did not declare.
+    pairing: str = "same-label"
