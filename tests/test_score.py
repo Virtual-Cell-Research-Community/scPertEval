@@ -80,3 +80,34 @@ def test_gene_alignment_reorders_by_name(dataset_adata, predictions_factory, cfg
     # pertA's DE block (genes 0-5) should be the high-expression columns after realignment
     col_means = cells.mean(0)
     assert col_means[list(range(0, 6))].min() > col_means[10:].max()
+
+
+def test_identity_gene_order_skips_the_column_gather(dataset_adata, predictions_factory, cfg_factory):
+    # a prediction already in the dataset's gene order needs no reindexing, and must agree
+    # cell-for-cell with the same prediction handed over with its columns shuffled
+    cfg = cfg_factory()
+    ds = Dataset(dataset_adata, cfg)
+    aligned = PredictionSet(predictions_factory(dataset_adata, kind="perfect"), ds, cfg)
+    shuffled = PredictionSet(predictions_factory(dataset_adata, kind="perfect", shuffle_genes=True), ds, cfg)
+
+    assert aligned._reorder == slice(None)
+    np.testing.assert_array_equal(np.asarray(aligned.cells("pertA")), np.asarray(shuffled.cells("pertA")))
+
+
+def test_rows_match_a_label_scan(dataset_adata, predictions_factory, cfg_factory):
+    # the prebuilt label->rows map must reproduce np.where's selection and ordering exactly
+    cfg = cfg_factory()
+    ds = Dataset(dataset_adata, cfg)
+    ps = PredictionSet(predictions_factory(dataset_adata, kind="perfect"), ds, cfg)
+
+    for pert in ds.perturbations:
+        np.testing.assert_array_equal(ps._rows[pert], np.where(ps.pert == pert)[0])
+
+
+def test_missing_perturbation_still_raises(dataset_adata, predictions_factory, cfg_factory):
+    cfg = cfg_factory()
+    ds = Dataset(dataset_adata, cfg)
+    ps = PredictionSet(predictions_factory(dataset_adata, kind="perfect"), ds, cfg)
+
+    with pytest.raises(ValueError, match="no cells for perturbation 'absent'"):
+        ps.cells("absent")

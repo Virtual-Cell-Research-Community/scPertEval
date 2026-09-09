@@ -8,6 +8,8 @@ order so every metric's positional ``gt - prediction`` comparison lines up.
 
 from __future__ import annotations
 
+from itertools import pairwise
+
 import numpy as np
 
 from .dataset import Dataset
@@ -38,14 +40,34 @@ def _align_genes(pred_genes: np.ndarray, ds_genes: np.ndarray) -> np.ndarray:
     return np.array([pos[str(g)] for g in ds_genes], dtype=int)
 
 
+def _rows_by_label(pert: np.ndarray) -> dict[str, np.ndarray]:
+    """Map each perturbation label to its row indices, in ascending order.
+
+    Built once, so serving a perturbation's cells is a dict lookup rather than a scan of the whole
+    label array -- which a scoring run repeats once per perturbation per protocol.
+    """
+    if len(pert) == 0:  # degenerate file; `cells()` raises the informative error per perturbation
+        return {}
+    order = np.argsort(pert, kind="stable")  # stable, so each group's rows stay ascending
+    labels = pert[order]
+    bounds = np.flatnonzero(np.r_[True, labels[1:] != labels[:-1], True])
+    return {str(labels[a]): order[a:b] for a, b in pairwise(bounds)}
+
+
 class PredictionSet:
     """Predicted cells per perturbation, gene-aligned to a :class:`Dataset`."""
 
     def __init__(self, adata, ds: Dataset, cfg: RunConfig):
         self.cfg = cfg
         self.adata = adata
-        self._reorder = _align_genes(np.asarray(adata.var_names), ds.var_names)
+        reorder = _align_genes(np.asarray(adata.var_names), ds.var_names)
+        # A prediction file already in the dataset's gene order needs no gather at all. Keeping the
+        # identity as a slice makes `cells()` a row selection rather than a row *and* column copy,
+        # which is the common case and the more expensive of the two.
+        identity = np.array_equal(reorder, np.arange(len(reorder)))
+        self._reorder = slice(None) if identity else reorder
         self.pert = np.asarray(adata.obs[cfg.perturbation_key]).astype(str)
+        self._rows = _rows_by_label(self.pert)
 
     @classmethod
     def load(cls, path: str, ds: Dataset, cfg: RunConfig) -> PredictionSet:
@@ -56,8 +78,8 @@ class PredictionSet:
 
     def cells(self, pert: str) -> np.ndarray:
         """Predicted cells for one perturbation, columns in the dataset's gene order."""
-        idx = np.where(self.pert == pert)[0]
-        if len(idx) == 0:
+        idx = self._rows.get(pert)
+        if idx is None:
             raise ValueError(
                 f"predictions contain no cells for perturbation {pert!r} "
                 f"(it is evaluated in the dataset but absent from the prediction file)"
