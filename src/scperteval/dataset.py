@@ -42,8 +42,10 @@ class Dataset:
         self.halves: dict[str, tuple[np.ndarray, np.ndarray]] = {}
         self.perturbations: list[str] = []
         means = []
+        largest = 0  # biggest perturbation seen, so a fully-filtered dataset can say why
         for p in np.unique(self.pert[self.pert != self.control_label]):
             idx = np.where(self.pert == p)[0]
+            largest = max(largest, len(idx))
             if len(idx) < min_cells:
                 continue
             shuffled = idx.copy()
@@ -52,7 +54,17 @@ class Dataset:
             self.halves[p] = (np.sort(shuffled[:h]), np.sort(shuffled[h:]))
             self.perturbations.append(p)
             means.append(np.asarray(self.adata.X[idx].mean(0)).ravel())
-        self._mean_matrix = np.vstack(means) if means else np.zeros((0, len(self.var_names)))
+        if not self.perturbations:
+            # Every verb downstream would otherwise return an empty frame -- no rows and no metric
+            # columns -- so the caller meets a bare KeyError far from the cause. Fail here instead.
+            n_labels = len(np.unique(self.pert[self.pert != self.control_label]))
+            raise ValueError(
+                f"no perturbations left after filtering: min_cells={min_cells} kept 0 of "
+                f"{n_labels} perturbation(s), the largest of which has {largest} cell(s). "
+                f"Lower min_cells (below {largest + 1}), or check that control_label="
+                f"{self.control_label!r} and the perturbation column name are right for this dataset."
+            )
+        self._mean_matrix = np.vstack(means)
         self._pert_row = {p: i for i, p in enumerate(self.perturbations)}
         self._mean_sum = self._mean_matrix.sum(0)
 

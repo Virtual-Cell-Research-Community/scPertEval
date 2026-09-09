@@ -248,3 +248,21 @@ def test_api_matches_cli(dataset_path, tmp_path):
     pd.testing.assert_frame_equal(
         api.per_perturbation.reset_index(drop=True), cli_df.reset_index(drop=True), check_dtype=False
     )
+
+
+def test_prepare_rejects_a_fully_filtered_dataset(dataset_adata):
+    # min_cells above every perturbation's size used to yield a 0-perturbation handle whose
+    # score() returned a frame with no metric column at all -- a bare KeyError downstream
+    with pytest.raises(ValueError, match="no perturbations left after filtering") as excinfo:
+        sp.prepare(dataset_adata, ["pearson_ctrl"], min_cells=10_000)
+
+    message = str(excinfo.value)
+    assert "min_cells=10000" in message  # what was asked for
+    assert "120 cell(s)" in message  # and what the data can actually support
+
+
+def test_prepare_reports_the_largest_perturbation_it_saw(dataset_adata):
+    # the boundary is the full per-perturbation count, not the post-split half
+    sp.prepare(dataset_adata, [], min_cells=120)
+    with pytest.raises(ValueError, match="largest of which has 120 cell"):
+        sp.prepare(dataset_adata, [], min_cells=121)

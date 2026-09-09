@@ -164,14 +164,44 @@ class Context:
 
     def centroid(self, pert, source, centering):
         """Pseudobulk centroid of ``source`` for ``pert``, optionally centered."""
-        arr = self.source(source)(self, pert)
-        if self.source_meta(source).get("provides") == "centroid":
-            v = np.asarray(arr, dtype=np.float64).ravel()
-        else:
-            v = np.asarray(to_dense(arr), dtype=np.float64).mean(0)
+        v = self._pseudobulk(pert, source)
         if centering is not None:  # subtract a named centroid source; None = no centering
             v = v - self._centering_vector(centering, pert)
         return v
+
+    def _pseudobulk(self, pert, source):
+        """The un-centred pseudobulk of ``source`` for ``pert``, cached for dataset-derived sources.
+
+        Cached *below* centering and *below* the space, both of which are cheap operations on the
+        result (a vector subtraction and a gene selection). Keying on them instead would store one
+        near-duplicate per protocol variant -- and a protocol's space is a property of the
+        perturbation in hand, so the reduction has to stay shareable across the spaces applied to
+        it. As with :meth:`de`, a non-cacheable source (per-call ``prediction`` cells) is computed
+        fresh and never stored, so a shared handle can score different predictions without
+        cross-call contamination.
+        """
+
+        def compute():
+            arr = self.source(source)(self, pert)
+            if self.source_meta(source).get("provides") == "centroid":
+                return np.asarray(arr, dtype=np.float64).ravel()
+            return np.asarray(to_dense(arr), dtype=np.float64).mean(0)
+
+        if not self._cacheable(source):
+            return compute()
+
+        def compute_shared():
+            # Read-only, because this array is handed to callers by reference: with no centering
+            # `centroid` returns it as-is, and the identity space keeps it a view. No metric writes
+            # to its input today, and this makes a future one that does fail loudly here rather
+            # than silently corrupt every later call against the handle.
+            v = compute()
+            v.flags.writeable = False
+            return v
+
+        # `de_method` is in the key because a cacheable source may itself depend on it -- e.g.
+        # `interpolated` blends by DE-derived weights -- and this cache outlives the per-call config.
+        return _once(self._store, ("pseudobulk", (source, pert, self.cfg.de_method)), compute_shared)
 
     def _centering_vector(self, name, pert):
         """Centroid of a named centering source for ``pert`` (the ``center_on`` baseline)."""
