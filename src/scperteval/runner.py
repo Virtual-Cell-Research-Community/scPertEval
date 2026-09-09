@@ -10,7 +10,7 @@ from time import perf_counter
 import numpy as np
 from threadpoolctl import threadpool_limits
 
-from .types import Calibrator, Protocol
+from .types import Calibrator, CrossRow, Protocol
 
 #: Generic (positive, negative) control defaults keyed on ``representation`` — the base tier of
 #: control resolution, used unless a protocol declares a default or a run overrides one.
@@ -44,9 +44,10 @@ def _resolve_candidates(p: Protocol, cfg) -> dict:
 def run_protocol(p: Protocol, ctx, calibrator: Calibrator):
     """Run one protocol over every perturbation and apply the calibrator.
 
-    ``p.scope`` chooses the execution path: ``"perturbation"``-scope protocols run in a
-    thread pool (one perturbation at a time); ``"dataset"``-scope protocols collect all
-    perturbations' datapoints first, then call the metric once.
+    Same-label pairing: both sides of every comparison are the same perturbation. ``p.scope``
+    chooses the execution path: ``"perturbation"``-scope protocols run in a thread pool (one
+    perturbation at a time); ``"dataset"``-scope protocols collect all perturbations' datapoints
+    first, then call the metric once. See :func:`run_cross` for the other pairing.
 
     Parameters
     ----------
@@ -66,12 +67,28 @@ def run_protocol(p: Protocol, ctx, calibrator: Calibrator):
     seconds : float
         Wall-clock time for this protocol.
     """
+    _check_pairing(calibrator, "same-label")
     candidates = _resolve_candidates(p, ctx.cfg)
     needed = {name: candidates[name] for name in calibrator.requires}
     _check_sources(p, needed, ctx)
     ctx.candidates = candidates  # the resolved negative drives _de_view's neg_reference choice
     run = _run_dataset if p.scope == "dataset" else _run_per_perturbation
     return run(p, ctx, calibrator, needed)
+
+
+def _check_pairing(calibrator: Calibrator, expected: str) -> None:
+    """Refuse a calibrator on an execution path it did not declare.
+
+    The two paths hand ``per_pert`` different things in the ``raws`` slot, so running a calibrator
+    down the wrong one produces a KeyError deep in a reduction rather than a statement of the
+    mismatch. Guarded here, at both entry points, so no caller can route around it.
+    """
+    if calibrator.pairing != expected:
+        other = "cross_calibrate()" if calibrator.pairing == "cross" else "calibrate() or score()"
+        raise ValueError(
+            f"calibrator {calibrator.name!r} declares pairing={calibrator.pairing!r}, but this is "
+            f"the {expected!r} path. Run it through {other} instead."
+        )
 
 
 def run_all(cfg, protocols, ctx):
@@ -253,6 +270,65 @@ def run_compare(p: Protocol, ctx, query: str, origin: str | None, references: li
 
     with ThreadPoolExecutor(max_workers=_n_workers(ctx.cfg)) as pool:
         return list(pool.map(work, references))
+
+
+def run_cross(p: Protocol, calibrator: Calibrator, units, references: list[str]):
+    """Run one protocol under cross pairing and apply the calibrator (the third execution path).
+
+    Sibling to :func:`_run_per_perturbation` and :func:`_run_dataset`, and returns the same
+    ``(aggregate, rows, seconds)`` triple, so the existing result and CSV machinery needs no
+    change. What differs is only how the two sides are paired: each unit is scored against *every*
+    reference by :func:`run_compare`, and the calibrator reduces that row rather than a handful of
+    named controls.
+
+    Parameters
+    ----------
+    p : ~scperteval.types.Protocol
+        The concrete protocol to evaluate.
+    calibrator : ~scperteval.types.Calibrator
+        Must declare ``pairing="cross"``. Its ``per_pert`` receives a
+        :class:`~scperteval.types.CrossRow`.
+    units : list of tuple
+        ``(label, ctx, query, origin)`` per unit: its output label, a context carrying only that
+        unit's query source, the name that source is registered under, and the perturbation the
+        cells came from (or ``None``). Contexts are built by the caller, which owns query
+        resolution.
+    references : list of str
+        Perturbations to score every unit against.
+
+    Returns
+    -------
+    aggregate : dict
+        Summary statistics across units.
+    rows : list of dict
+        One record per unit — the calibrated value plus what it was computed over. The individual
+        reference values are deliberately *not* columns: there is one per reference, and a wide
+        frame that grows with the library is not a useful table.
+    seconds : float
+        Wall-clock time.
+    """
+    _check_pairing(calibrator, "cross")
+    start = perf_counter()
+    # Units run in sequence: run_compare already fans out across references, and nesting a second
+    # pool inside it would oversubscribe rather than go faster.
+    rows_raw = [
+        (label, CrossRow(dict(zip(references, run_compare(p, ctx, query, origin, references))), origin))
+        for label, ctx, query, origin in units
+    ]
+    seconds = perf_counter() - start
+
+    per_unit = [calibrator.per_pert(row, p) for _, row in rows_raw]
+    rows = [
+        {
+            "protocol": p.name,
+            "query": label,
+            "origin": row.target,
+            "references": len(references),
+            calibrator.name: value,
+        }
+        for (label, row), value in zip(rows_raw, per_unit)
+    ]
+    return calibrator.aggregate(np.asarray(per_unit, dtype=float)), rows, seconds
 
 
 def compute_de(ctx):

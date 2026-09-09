@@ -27,7 +27,7 @@ from .context import CacheStore, Context
 from .dataset import Dataset, to_dense
 from .predictions import PredictionSet
 from .protocols.resolve import resolve_protocols
-from .runner import _n_workers, compute_de, run_all, run_compare
+from .runner import _n_workers, compute_de, run_all, run_compare, run_cross
 from .sources import SOURCES
 from .types import Protocol, RunConfig
 
@@ -42,6 +42,7 @@ __all__ = [
     "Prepared",
     "calibrate",
     "compare",
+    "cross_calibrate",
     "de",
     "prepare",
     "score",
@@ -75,9 +76,14 @@ class EvalResult:
     per_perturbation: pd.DataFrame
 
     def __repr__(self) -> str:
-        col = self.per_perturbation.get("perturbation")
+        # Cross-paired results are one row per query rather than per perturbation, so the unit
+        # column differs; report whichever this frame carries rather than a misleading zero.
+        unit, plural = (
+            ("perturbation", "perturbations") if "perturbation" in self.per_perturbation else ("query", "queries")
+        )
+        col = self.per_perturbation.get(unit)
         n = col.nunique() if col is not None else 0
-        return f"EvalResult(aggregate={self.aggregate}, perturbations={n})"
+        return f"EvalResult(aggregate={self.aggregate}, {plural}={n})"
 
 
 class DatasetDEResults(NamedTuple):
@@ -382,6 +388,47 @@ def _resolve_queries(queries, ds: Dataset, cfg: RunConfig, query_origin) -> list
     return [(lab, cells, origins[lab]) for lab, cells in pairs]
 
 
+def _cross_setup(prepared, verb, protocol, queries, references, query_origin, de_method, center_on, out_dir):
+    """Shared setup for the cross-pairing verbs: resolve everything, warm once, build one context per query.
+
+    :func:`compare` and :func:`cross_calibrate` differ only in what they do with the resulting
+    values, so the resolution, the warm-up and the per-query contexts are settled once here.
+
+    Returns ``(proto, refs, units, ctx)``, where ``units`` is the ``(label, ctx, query, origin)``
+    list :func:`~scperteval.runner.run_cross` consumes and ``ctx`` is the shared context whose
+    ``cfg`` carries ``out_dir``.
+    """
+    _require_prepared(prepared, verb)
+    _check_de_method(de_method)
+    proto = _single_protocol(protocol)
+    refs = _resolve_references(prepared._ds, references)
+    resolved = _resolve_queries(queries, prepared._ds, prepared._cfg, query_origin)
+    overrides = dict(
+        protocols=[proto.name],
+        de_method=de_method,
+        calibrator="score",
+        truth="gt_all_cells",
+        out_dir=str(out_dir) if out_dir is not None else "results",
+    )
+
+    ctx = prepared._run_context(**overrides)
+    if center_on is not None:
+        proto = _apply_center_on(proto, center_on, ctx)
+        overrides["protocols"] = [proto.name]
+    # Warm once for the whole call with BLAS free to use every thread, as run_all does. The
+    # per-query contexts below share this handle's cache, so they only ever hit it.
+    with threadpool_limits(limits=_n_workers(ctx.cfg)):
+        ctx.warm([proto])
+
+    # One context per query, each carrying only its own query source — so a multi-query call
+    # cannot leak one query's cells into another's comparison.
+    units = [
+        (label, prepared._run_context(sources={_QUERY_SOURCE: _query_source(cells, proto)}, **overrides), origin)
+        for label, cells, origin in resolved
+    ]
+    return proto, refs, [(label, qctx, _QUERY_SOURCE, origin) for label, qctx, origin in units], ctx
+
+
 def _query_source(cells: np.ndarray, proto: Protocol) -> tuple[Callable, dict]:
     """Register one query's *already reduced* datapoint as a call-scoped source.
 
@@ -507,6 +554,15 @@ def calibrate(
     """
     _require_prepared(prepared, "calibrate")
     if calibrator not in ("drf", "bds"):
+        # A registered cross calibrator gets the pairing message rather than this verb's closed-set
+        # one, which would misdescribe why it was refused.
+        from .calibrators import CALIBRATORS
+
+        if CALIBRATORS.get(calibrator) is not None and CALIBRATORS[calibrator].pairing == "cross":
+            raise ValueError(
+                f"calibrator {calibrator!r} declares pairing='cross', so it reduces one query's "
+                f"values against many references. Run it through cross_calibrate() instead."
+            )
         raise ValueError(
             f"calibrate calibrator must be 'drf' or 'bds', not {calibrator!r} (use score() for predictions)"
         )
@@ -663,42 +719,88 @@ def compare(
     --------
     score : Same-label scoring of model predictions.
     """
-    _require_prepared(prepared, "compare")
-    _check_de_method(de_method)
-    proto = _single_protocol(protocol)
-    refs = _resolve_references(prepared._ds, references)
-    resolved = _resolve_queries(queries, prepared._ds, prepared._cfg, query_origin)
-    overrides = dict(
-        protocols=[proto.name],
-        de_method=de_method,
-        calibrator="score",
-        truth="gt_all_cells",
-        out_dir=str(out_dir) if out_dir is not None else "results",
+    proto, refs, units, ctx = _cross_setup(
+        prepared, "compare", protocol, queries, references, query_origin, de_method, center_on, out_dir
     )
-
-    ctx = prepared._run_context(**overrides)
-    if center_on is not None:
-        proto = _apply_center_on(proto, center_on, ctx)
-        overrides["protocols"] = [proto.name]
-    # Warm once for the whole call with BLAS free to use every thread, as run_all does. The
-    # per-query contexts below share this handle's cache, so they only ever hit it.
-    with threadpool_limits(limits=_n_workers(ctx.cfg)):
-        ctx.warm([proto])
-
-    rows = []
-    for _, cells, origin in resolved:
-        # One context per query, each carrying only its own query source — so a multi-query call
-        # cannot leak one query's cells into another's comparison.
-        qctx = prepared._run_context(sources={_QUERY_SOURCE: _query_source(cells, proto)}, **overrides)
-        rows.append(run_compare(proto, qctx, _QUERY_SOURCE, origin, refs))
-
-    frame = pd.DataFrame(rows, index=[label for label, _, _ in resolved], columns=refs, dtype=float)
+    rows = [run_compare(proto, qctx, query, origin, refs) for _, qctx, query, origin in units]
+    frame = pd.DataFrame(rows, index=[label for label, _, _, _ in units], columns=refs, dtype=float)
     frame.index.name, frame.columns.name = "query", "reference"
     if out_dir is not None:
         # `proto.name`, not `cfg.protocols`: a `center_on` variant is minted after the context is
         # built, so the protocol object is the only place the final name is certain to be right.
         io.write_compare(ctx.cfg, proto.name, frame, _stamp())
     return frame
+
+
+def cross_calibrate(
+    prepared: Prepared,
+    protocol: str,
+    queries: str | list[str] | np.ndarray | AnnData,
+    *,
+    calibrator: str,
+    references: str | list[str] | None = None,
+    query_origin: str | dict[str, str] | None = None,
+    de_method: DEMethodName = "t-test",
+    center_on: str | None = None,
+    out_dir: str | Path | None = None,
+) -> EvalResult:
+    """Reduce each query's values against every reference to one score, with a cross calibrator.
+
+    The cross-pairing counterpart of :func:`calibrate`. Where :func:`calibrate` reduces a
+    perturbation's values against a couple of named controls, this reduces a query's values against
+    *every* reference — the row :func:`compare` returns raw — into one number per query, plus an
+    aggregate across them.
+
+    .. note::
+
+       **No cross calibrator ships with scPertEval.** This is the mechanism only; register one
+       (``CALIBRATORS["…"] = Calibrator(…, pairing="cross")``) before calling this verb. A
+       same-label calibrator (``drf``, ``bds``, ``score``) is refused, and a cross calibrator is
+       likewise refused by :func:`calibrate`.
+
+    Parameters
+    ----------
+    prepared : Prepared
+        A handle from :func:`prepare` — the reference library.
+    protocol : str
+        A single protocol spec (see :func:`calibrate`). Dataset-scope protocols are rejected, as
+        they are by :func:`compare`.
+    queries : str or list of str or numpy.ndarray or anndata.AnnData
+        What to score, in any form :func:`compare` accepts.
+    calibrator : str
+        Name of a registered calibrator declaring ``pairing="cross"``. Its ``per_pert`` is handed a
+        :class:`~scperteval.types.CrossRow` per query and returns that query's score.
+    references, query_origin, de_method, center_on : optional
+        As for :func:`compare`.
+    out_dir : str or pathlib.Path, optional
+        If given, also write the per-query CSV there (as the other verbs do).
+
+    Returns
+    -------
+    EvalResult
+        ``.aggregate`` (the calibrator's summary across queries) and ``.per_perturbation`` (one row
+        per query: the score, its origin, and how many references it was computed over). The raw
+        per-reference values are not included — use :func:`compare` for those.
+
+    See Also
+    --------
+    compare : The same pairing, returning the raw values instead of a reduction.
+    calibrate : Same-label calibration against positive/negative controls.
+    """
+    from .calibrators import CALIBRATORS
+
+    if calibrator not in CALIBRATORS:
+        raise ValueError(f"unknown calibrator {calibrator!r}; registered: {', '.join(sorted(CALIBRATORS))}")
+    proto, refs, units, ctx = _cross_setup(
+        prepared, "cross_calibrate", protocol, queries, references, query_origin, de_method, center_on, out_dir
+    )
+    cal = CALIBRATORS[calibrator]
+    aggregate, rows, _ = run_cross(proto, cal, units, refs)
+    # The calibrator names the score column, so the config has to agree for the CSV filename.
+    ctx.cfg.calibrator, ctx.cfg.protocols = cal.name, [proto.name]
+    if out_dir is not None:
+        io.write_rows(ctx.cfg, rows, _stamp())
+    return EvalResult(aggregate=aggregate, per_perturbation=io.rows_frame(ctx.cfg, rows))
 
 
 def de(

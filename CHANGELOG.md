@@ -17,6 +17,10 @@
   the reference instead.
 - `compare(out_dir=...)` writes the matrix to a timestamped CSV, matching `calibrate()`,
   `score()` and `de()`.
+- **`cross_calibrate()`** and `Calibrator(pairing=...)` — a calibrator now declares how the two
+  sides of each comparison are paired, and the new verb reduces one query's values against every
+  reference to a score per query. No cross calibrator ships; the verbs enforce the match, so an
+  existing calibrator cannot be run down the new path or vice versa.
 
 ### Documentation
 
