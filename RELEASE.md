@@ -23,6 +23,20 @@ repository's release/CI/docs machinery is wired together.
 
 That's it — everything below step 3 is automatic.
 
+**Releasing from a commit other than the tip of `main`.** If work you don't want in the release
+has already merged, tag the commit you do want — `--target` takes a full SHA as well as a branch:
+
+```bash
+gh release create v0.2.0 --target <sha> --title "v0.2.0" --generate-notes
+```
+
+This is safe because `release.yaml` checks out without a `ref:`, so it builds `github.ref` — the
+tag — not the tip of `main`. The version, the published artifact and ReadTheDocs' `stable` all
+follow the tag. Two caveats: everything merged *before* that commit is in the release, since a tag
+is a point in history rather than a filter; and `--generate-notes` lists commits since the previous
+tag on the default branch, so it may name work the release doesn't contain — write the notes by
+hand (or paste the changelog section) when tagging a non-tip commit.
+
 **How to pick the version number (semver):**
 
 - Pre-1.0 (where we are now): bump the **minor** (`0.2.0`) for new features *or* breaking
