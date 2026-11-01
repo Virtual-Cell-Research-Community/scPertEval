@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+### Changed
+
+- The sample-dataset bucket `gs://scperteval` now uses Requester Pays. Anonymous downloads and plain
+  HTTPS links no longer work: you need a Google account and a Google Cloud project with billing
+  enabled, and that project pays for the download. See the
+  [download instructions](https://scperteval.readthedocs.io/en/latest/user-guide/datasets.html#downloading).
+
 ## 0.2.0
 
 ### Added
