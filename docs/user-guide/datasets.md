@@ -1,16 +1,15 @@
 # Datasets
 
-Seven preprocessed single-cell perturbation datasets are available from a public GCS bucket:
+Seven preprocessed single-cell perturbation datasets are available from a
+[Requester Pays](https://cloud.google.com/storage/docs/requester-pays) Cloud Storage bucket:
 
 ```
 gs://scperteval/processed/
 ```
 
-Each file is also reachable over plain HTTPS:
-
-```
-https://storage.googleapis.com/scperteval/processed/<dataset>_processed_complete.h5ad
-```
+Anyone can read the bucket, but each download is billed to a Google Cloud project that you provide.
+Anonymous requests and plain `https://storage.googleapis.com/...` links no longer work. See
+[Downloading](#downloading) for what you need, the commands and the cost.
 
 ## Available datasets
 
@@ -119,12 +118,52 @@ Whether a study evaluates combos, singles, or both is a downstream modelling cho
 
 ## Downloading
 
-```bash
-# single file
-gsutil cp gs://scperteval/processed/replogle22k562_processed_complete.h5ad .
+Download traffic grew to terabytes per month, so the bucket now uses Requester Pays: the data stays
+open to everyone, and the project named in each request pays Google's data-transfer cost. Signing
+in with a Google account is not enough on its own, because the request must also name a project
+with billing enabled.
 
-# all files (parallel)
-gsutil -m cp gs://scperteval/processed/*_processed_complete.h5ad .
+### What you need
+
+1. A Google account.
+2. A Google Cloud project with billing enabled. See how to
+   [create a project](https://cloud.google.com/resource-manager/docs/creating-managing-projects) and
+   [enable billing](https://cloud.google.com/billing/docs/how-to/modify-project). New Google Cloud
+   customers may be eligible for
+   [Free Trial credit](https://cloud.google.com/free/docs/free-cloud-features). If you use a project
+   you don't own, you need a role with the `serviceusage.services.use` permission, such as Service
+   Usage Consumer.
+3. The [gcloud CLI](https://cloud.google.com/sdk/docs/install), signed in:
+
+   ```bash
+   gcloud auth login
+   ```
+
+In the commands below, replace `YOUR_PROJECT_ID` with your project's ID. `gcloud projects list`
+shows the projects you can see.
+
+### Commands
+
+```bash
+# list the files
+gcloud storage ls --billing-project=YOUR_PROJECT_ID gs://scperteval/processed/
+
+# single file
+gcloud storage cp --billing-project=YOUR_PROJECT_ID gs://scperteval/processed/replogle22k562_processed_complete.h5ad .
+
+# all files (the quotes stop your shell from expanding the *)
+gcloud storage cp --billing-project=YOUR_PROJECT_ID "gs://scperteval/processed/*_processed_complete.h5ad" .
+```
+
+To download over HTTPS instead, on macOS or Linux (`--fail` stops `curl` from saving an error
+message as the output file):
+
+```bash
+curl --fail -L \
+  -H "Authorization: Bearer $(gcloud auth print-access-token)" \
+  -H "x-goog-user-project: YOUR_PROJECT_ID" \
+  -o replogle22k562_processed_complete.h5ad \
+  https://storage.googleapis.com/scperteval/processed/replogle22k562_processed_complete.h5ad
 ```
 
 Then pass the path directly to the CLI:
@@ -132,3 +171,32 @@ Then pass the path directly to the CLI:
 ```bash
 scperteval calibrate ./replogle22k562_processed_complete.h5ad -p all --de-method t-test
 ```
+
+### Cost
+
+Downloads are billed at Google's [data-transfer rates](https://cloud.google.com/storage/pricing).
+As of November 2026 that is $0.12 per GiB to most destinations, and more to China and Australia.
+At that rate:
+
+| Dataset | Size | Approximate cost |
+|---|---|---|
+| `replogle22k562` | 2.43 GB | $0.27 |
+| `replogle22rpe1` | 1.88 GB | $0.21 |
+| `nadig25hepg2` | 1.24 GB | $0.14 |
+| `nadig25jurkat` | 2.00 GB | $0.22 |
+| `wessels23` | 0.20 GB | $0.02 |
+| `arch1` | 4.38 GB | $0.49 |
+| `kaden25rpe1` | 5.64 GB | $0.63 |
+| All seven | 17.76 GB | $1.99 |
+
+Downloading to a Google Cloud VM in `us-central1`, the bucket's region, has no data-transfer charge.
+
+### If a download fails
+
+| The error contains | What it means | What to do |
+|---|---|---|
+| `You do not currently have an active account selected` | gcloud isn't signed in | Run `gcloud auth login` |
+| `requester pays bucket but no user project provided` | The request didn't name a project | Add `--billing-project=YOUR_PROJECT_ID` |
+| `User project specified in the request is invalid` | The project ID is wrong | Check the ID with `gcloud projects list` |
+| `does not have serviceusage.services.use access` | Your account can't use that project | Use your own project, or ask its owner for the Service Usage Consumer role |
+| `UserProjectAccountProblem`, or a message about billing | The project has a billing problem | Check that billing is [enabled](https://cloud.google.com/billing/docs/how-to/modify-project) and the account is in good standing |
