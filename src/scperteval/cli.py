@@ -14,7 +14,7 @@ from .dataset import Dataset
 from .predictions import PredictionSet
 from .protocols.resolve import _concrete, _resolve_token, available, resolve_protocols  # noqa: F401 (re-exported)
 from .protocols.table import TABLE
-from .runner import _resolve_candidates, compute_de, run_all
+from .runner import DE_REFERENCES, DE_TARGETS, _resolve_candidates, compute_de, run_all
 from .sources import SOURCES
 from .types import RunConfig
 
@@ -100,12 +100,22 @@ def cmd_de(args) -> None:
         control_label=args.control_label,
     )
     ctx = Context(Dataset.load(cfg.dataset, cfg), cfg)
-    ctx._ensure_reference_sums()
-    statistic, pvalue_adj = compute_de(ctx)
+    statistic, pvalue_adj = compute_de(ctx, target=args.target, reference=args.reference)
     stamp = datetime.now().strftime("%Y-%m-%dT%H%M%S")
-    path = io.write_de(cfg, ctx.ds.var_names, ctx.perturbations, {args.method: (statistic, pvalue_adj)}, stamp)
+    path = io.write_de(
+        cfg,
+        ctx.ds.var_names,
+        ctx.perturbations,
+        {args.method: (statistic, pvalue_adj)},
+        stamp,
+        target=args.target,
+        reference=args.reference,
+    )
     if not args.quiet:
-        print(f"-> {path}  ({len(ctx.perturbations)} perturbations, method={args.method})")
+        print(
+            f"-> {path}  ({len(ctx.perturbations)} perturbations, method={args.method}, "
+            f"target={args.target}, reference={args.reference})"
+        )
 
 
 def cmd_list(args) -> None:
@@ -226,7 +236,19 @@ def build_parser() -> argparse.ArgumentParser:
         "--method",
         choices=DE_METHODS.names(),
         default="t-test",
-        help="DE method to compute (GT first-half vs all-perturbed)",
+        help="DE method to compute",
+    )
+    de.add_argument(
+        "--target",
+        choices=DE_TARGETS,
+        default="gt_half",
+        help="target cells per perturbation (default: deterministic first half)",
+    )
+    de.add_argument(
+        "--reference",
+        choices=DE_REFERENCES,
+        default="all_perturbed",
+        help="reference population (default: capped all-perturbed sample, leave-one-out)",
     )
     de.add_argument("--subsample", type=int, default=8192)
     de.add_argument("--seed", type=int, default=42)

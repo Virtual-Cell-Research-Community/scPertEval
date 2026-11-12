@@ -29,6 +29,31 @@ def test_de_writes_h5(dataset_path, tmp_path):
     assert len(list(tmp_path.glob("*__de.h5"))) == 1
 
 
+def test_de_accepts_target_and_reference(dataset_path, tmp_path):
+    main(
+        [
+            "de",
+            dataset_path,
+            "--method",
+            "t-test",
+            "--target",
+            "gt_all_cells",
+            "--reference",
+            "control",
+            "--out-dir",
+            str(tmp_path),
+            "--quiet",
+        ]
+    )
+    import h5py
+
+    paths = list(tmp_path.glob("*__de.h5"))
+    assert len(paths) == 1
+    with h5py.File(paths[0]) as f:
+        assert f.attrs["target"] == "gt_all_cells"
+        assert f.attrs["reference"] == "control"
+
+
 def test_calibrate_rejects_score_output(dataset_path, tmp_path):
     # `score` is a scoring-mode calibrator, not selectable from `calibrate --calibrator`
     with pytest.raises(SystemExit):

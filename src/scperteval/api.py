@@ -26,7 +26,7 @@ from .context import CacheStore, Context
 from .dataset import Dataset
 from .predictions import PredictionSet
 from .protocols.resolve import resolve_protocols
-from .runner import compute_de, run_all
+from .runner import DE_REFERENCES, DE_TARGETS, compute_de, run_all
 from .sources import SOURCES
 from .types import Protocol, RunConfig
 
@@ -50,6 +50,10 @@ CalibratorName = Literal["drf", "bds"]
 #: The DE backends selectable from :func:`de` / ``de_method`` — mirrors the ``DE_METHODS`` registry's
 #: built-ins (kept in sync by ``tests/test_api.py::test_de_method_literal_matches_registry``).
 DEMethodName = Literal["t-test", "MWU", "t-test_overestim_var"]
+#: Ground-truth cell populations accepted by :func:`de`.
+DETargetName = Literal["gt_half", "gt_all_cells"]
+#: Reference populations accepted by :func:`de`.
+DEReferenceName = Literal["all_perturbed", "control"]
 
 
 # --------------------------------------------------------------------------- result types
@@ -451,9 +455,11 @@ def de(
     prepared: Prepared,
     method: DEMethodName = "t-test",
     *,
+    target: DETargetName = "gt_half",
+    reference: DEReferenceName = "all_perturbed",
     out_dir: str | Path | None = None,
 ) -> DatasetDEResults:
-    """Compute per-gene differential expression (ground truth vs all-perturbed) for one method.
+    """Compute per-gene differential expression for one target/reference comparison.
 
     Parameters
     ----------
@@ -462,6 +468,12 @@ def de(
     method : str, optional
         The DE backend (default ``"t-test"``). Different methods reuse the same prepared dataset,
         cached separately — no reload.
+    target : {"gt_half", "gt_all_cells"}, optional
+        Target cells for each perturbation: its deterministic first half (the historical default)
+        or all observed cells.
+    reference : {"all_perturbed", "control"}, optional
+        Comparison population: the capped all-perturbed sample with the current perturbation
+        removed (the historical default), or the capped non-targeting controls.
     out_dir : str or pathlib.Path, optional
         If given, also write the HDF5 export there (as the CLI does).
 
@@ -472,9 +484,12 @@ def de(
     """
     _require_prepared(prepared, "de")
     _check_de_method(method)
+    if target not in DE_TARGETS:
+        raise ValueError(f"unsupported DE target {target!r}; available: {', '.join(DE_TARGETS)}")
+    if reference not in DE_REFERENCES:
+        raise ValueError(f"unsupported DE reference {reference!r}; available: {', '.join(DE_REFERENCES)}")
     ctx = prepared._run_context(de_method=method, out_dir=str(out_dir) if out_dir is not None else "results")
-    ctx._ensure_reference_sums()
-    statistic, pvalue_adj = compute_de(ctx)
+    statistic, pvalue_adj = compute_de(ctx, target=target, reference=reference)
     perts = list(ctx.perturbations)
     genes = [str(g) for g in ctx.ds.var_names]
     result = DatasetDEResults(
@@ -482,5 +497,13 @@ def de(
         pvalue_adj=pd.DataFrame(pvalue_adj, index=perts, columns=genes),
     )
     if out_dir is not None:
-        io.write_de(ctx.cfg, ctx.ds.var_names, ctx.perturbations, {method: (statistic, pvalue_adj)}, _stamp())
+        io.write_de(
+            ctx.cfg,
+            ctx.ds.var_names,
+            ctx.perturbations,
+            {method: (statistic, pvalue_adj)},
+            _stamp(),
+            target=target,
+            reference=reference,
+        )
     return result

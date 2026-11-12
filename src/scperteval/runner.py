@@ -203,15 +203,26 @@ def _run_dataset(p: Protocol, ctx, calibrator: Calibrator, needed: dict):
     return agg, rows, seconds
 
 
-def compute_de(ctx):
+DE_TARGETS = ("gt_half", "gt_all_cells")
+DE_REFERENCES = ("all_perturbed", "control")
+
+
+def compute_de(ctx, *, target=None, reference="all_perturbed"):
     """Per-gene DE matrices for ``ctx.cfg.de_method``, for export.
 
     Returns ``(statistic, pvalue_adj)`` matrices (perturbations x genes) for the
-    ground-truth-vs-all-perturbed differential expression under the context's DE method.
+    requested target-vs-reference comparison under the context's DE method.
+
+    ``target=None`` preserves the historical behavior by using ``ctx.cfg.truth``.
     """
+    target = ctx.cfg.truth if target is None else target
+    if target not in DE_TARGETS:
+        raise ValueError(f"unsupported DE target {target!r}; available: {', '.join(DE_TARGETS)}")
+    if reference not in DE_REFERENCES:
+        raise ValueError(f"unsupported DE reference {reference!r}; available: {', '.join(DE_REFERENCES)}")
 
     def work(pert):
-        d = ctx.de(pert, ctx.cfg.truth, "all_perturbed")
+        d = ctx.de(pert, target, reference)
         return d.statistic, d.pvalue_adj
 
     with ThreadPoolExecutor(max_workers=_n_workers(ctx.cfg)) as pool:

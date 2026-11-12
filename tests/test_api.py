@@ -98,6 +98,31 @@ def test_de_single_method(dataset_adata):
     assert stat.shape == padj.shape == (4, 60)
 
 
+def test_de_supports_all_cells_against_control(dataset_adata):
+    p = prep(dataset_adata, [])
+    default = sp.de(p, "t-test").statistic
+    observed_vs_control = sp.de(
+        p,
+        "t-test",
+        target="gt_all_cells",
+        reference="control",
+    ).statistic
+    assert observed_vs_control.shape == default.shape == (4, 60)
+    assert not np.allclose(observed_vs_control.to_numpy(), default.to_numpy())
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "message"),
+    [
+        ({"target": "tech_dup"}, "target"),
+        ({"reference": "global_mean"}, "reference"),
+    ],
+)
+def test_de_rejects_unsupported_comparison(dataset_adata, kwargs, message):
+    with pytest.raises(ValueError, match=message):
+        sp.de(prep(dataset_adata, []), "t-test", **kwargs)
+
+
 def test_de_rejects_unknown_method(dataset_adata):
     with pytest.raises(ValueError, match="unknown DE method"):
         sp.de(prep(dataset_adata, []), "nope")
@@ -218,6 +243,8 @@ def test_out_dir_writes_files(dataset_adata, tmp_path):
 
     with h5py.File(h5[0]) as f:
         assert f["t-test"]["statistic"].shape == (4, 60)
+        assert f.attrs["target"] == "gt_half"
+        assert f.attrs["reference"] == "all_perturbed"
         assert f["genes"].shape == (60,)
 
 
