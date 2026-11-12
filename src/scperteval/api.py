@@ -26,12 +26,12 @@ from .context import CacheStore, Context
 from .dataset import Dataset
 from .predictions import PredictionSet
 from .protocols.resolve import resolve_protocols
-from .runner import DE_REFERENCES, DE_TARGETS, compute_de, run_all
+from .runner import DE_REFERENCES, DE_TARGETS, compute_de, resolve_de_perturbations, run_all
 from .sources import SOURCES
 from .types import Protocol, RunConfig
 
 if TYPE_CHECKING:  # annotation-only; keeps ``import scperteval`` from eagerly importing anndata
-    from collections.abc import Callable
+    from collections.abc import Callable, Sequence
 
     from anndata import AnnData
 
@@ -457,6 +457,7 @@ def de(
     *,
     target: DETargetName = "gt_half",
     reference: DEReferenceName = "all_perturbed",
+    perturbations: Sequence[str] | None = None,
     out_dir: str | Path | None = None,
 ) -> DatasetDEResults:
     """Compute per-gene differential expression for one target/reference comparison.
@@ -474,6 +475,8 @@ def de(
     reference : {"all_perturbed", "control"}, optional
         Comparison population: the capped all-perturbed sample with the current perturbation
         removed (the historical default), or the capped non-targeting controls.
+    perturbations : sequence of str, optional
+        Ordered subset to compute. By default, compute every eligible perturbation.
     out_dir : str or pathlib.Path, optional
         If given, also write the HDF5 export there (as the CLI does).
 
@@ -489,8 +492,8 @@ def de(
     if reference not in DE_REFERENCES:
         raise ValueError(f"unsupported DE reference {reference!r}; available: {', '.join(DE_REFERENCES)}")
     ctx = prepared._run_context(de_method=method, out_dir=str(out_dir) if out_dir is not None else "results")
-    statistic, pvalue_adj = compute_de(ctx, target=target, reference=reference)
-    perts = list(ctx.perturbations)
+    perts = resolve_de_perturbations(ctx, perturbations)
+    statistic, pvalue_adj = compute_de(ctx, target=target, reference=reference, perturbations=perts)
     genes = [str(g) for g in ctx.ds.var_names]
     result = DatasetDEResults(
         statistic=pd.DataFrame(statistic, index=perts, columns=genes),
@@ -500,7 +503,7 @@ def de(
         io.write_de(
             ctx.cfg,
             ctx.ds.var_names,
-            ctx.perturbations,
+            perts,
             {method: (statistic, pvalue_adj)},
             _stamp(),
             target=target,

@@ -207,7 +207,22 @@ DE_TARGETS = ("gt_half", "gt_all_cells")
 DE_REFERENCES = ("all_perturbed", "control")
 
 
-def compute_de(ctx, *, target=None, reference="all_perturbed"):
+def resolve_de_perturbations(ctx, perturbations=None):
+    """Validate an optional ordered DE subset against the prepared dataset."""
+    if perturbations is None:
+        return list(ctx.perturbations)
+    selected = list(perturbations)
+    if len(selected) != len(set(selected)):
+        raise ValueError("duplicate perturbation in DE selection")
+    unknown = sorted(set(selected) - set(ctx.perturbations))
+    if unknown:
+        raise ValueError(f"unknown perturbation(s) in DE selection: {', '.join(unknown)}")
+    if not selected:
+        raise ValueError("DE perturbation selection is empty")
+    return selected
+
+
+def compute_de(ctx, *, target=None, reference="all_perturbed", perturbations=None):
     """Per-gene DE matrices for ``ctx.cfg.de_method``, for export.
 
     Returns ``(statistic, pvalue_adj)`` matrices (perturbations x genes) for the
@@ -220,13 +235,14 @@ def compute_de(ctx, *, target=None, reference="all_perturbed"):
         raise ValueError(f"unsupported DE target {target!r}; available: {', '.join(DE_TARGETS)}")
     if reference not in DE_REFERENCES:
         raise ValueError(f"unsupported DE reference {reference!r}; available: {', '.join(DE_REFERENCES)}")
+    selected = resolve_de_perturbations(ctx, perturbations)
 
     def work(pert):
         d = ctx.de(pert, target, reference)
         return d.statistic, d.pvalue_adj
 
     with ThreadPoolExecutor(max_workers=_n_workers(ctx.cfg)) as pool:
-        res = list(pool.map(work, ctx.perturbations))
+        res = list(pool.map(work, selected))
     return np.vstack([r[0] for r in res]), np.vstack([r[1] for r in res])
 
 

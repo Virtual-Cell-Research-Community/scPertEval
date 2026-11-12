@@ -111,6 +111,24 @@ def test_de_supports_all_cells_against_control(dataset_adata):
     assert not np.allclose(observed_vs_control.to_numpy(), default.to_numpy())
 
 
+def test_de_selects_requested_perturbations_in_order(dataset_adata):
+    result = sp.de(
+        prep(dataset_adata, []),
+        "t-test",
+        perturbations=["pertC", "pertA"],
+    )
+    assert list(result.statistic.index) == ["pertC", "pertA"]
+    assert result.statistic.shape == (2, 60)
+
+
+def test_de_rejects_unknown_or_duplicate_perturbations(dataset_adata):
+    prepared = prep(dataset_adata, [])
+    with pytest.raises(ValueError, match="unknown perturbation"):
+        sp.de(prepared, "t-test", perturbations=["missing"])
+    with pytest.raises(ValueError, match="duplicate perturbation"):
+        sp.de(prepared, "t-test", perturbations=["pertA", "pertA"])
+
+
 @pytest.mark.parametrize(
     ("kwargs", "message"),
     [

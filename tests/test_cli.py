@@ -54,6 +54,26 @@ def test_de_accepts_target_and_reference(dataset_path, tmp_path):
         assert f.attrs["reference"] == "control"
 
 
+def test_de_accepts_perturbations_file(dataset_path, tmp_path):
+    selected = tmp_path / "selected.txt"
+    selected.write_text("# pilot targets\npertC\n\npertA\n")
+    main(
+        [
+            "de",
+            dataset_path,
+            "--perturbations-file",
+            str(selected),
+            "--out-dir",
+            str(tmp_path),
+            "--quiet",
+        ]
+    )
+    import h5py
+
+    with h5py.File(next(tmp_path.glob("*__de.h5"))) as f:
+        assert [value.decode() for value in f["perturbations"][:]] == ["pertC", "pertA"]
+
+
 def test_calibrate_rejects_score_output(dataset_path, tmp_path):
     # `score` is a scoring-mode calibrator, not selectable from `calibrate --calibrator`
     with pytest.raises(SystemExit):
