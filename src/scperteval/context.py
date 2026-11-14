@@ -50,6 +50,12 @@ def _control_mean(scope: DatasetScope) -> np.ndarray:
 
 
 @cached
+def _control_cells(scope: DatasetScope):
+    """Materialize the immutable subsampled control reference once per prepared dataset."""
+    return scope.ds.control_cells(scope.subsample)
+
+
+@cached
 def _reference(scope: DatasetScope) -> Reference:
     idx = scope.ds.all_perturbed_indices(scope.subsample)
     cells = to_dense(scope.ds.adata.X[idx]).astype(np.float64)
@@ -234,7 +240,7 @@ class Context:
         if source == "all_perturbed":
             return self.reference().subset(pert)
         if source == "control":
-            return self.ds.control_cells(self.cfg.subsample)
+            return _control_cells(self)
         return self.source(source)(self, pert)
 
     @staticmethod
