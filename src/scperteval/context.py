@@ -31,15 +31,16 @@ class CacheStore:
     Held by a :class:`~scperteval.api.Prepared` handle and shared by reference across the
     ephemeral per-call :class:`Context` objects the verbs build. All entries are dataset-level
     or per-(perturbation, comparison) — none depend on a single call's ``calibrator``/``truth``, so
-    concurrent calls reuse them safely (distinct keys, or idempotent recompute under ``lock``).
+    concurrent calls reuse them safely. A per-key future coalesces duplicate work while allowing
+    different perturbations to compute concurrently.
     """
 
     def __init__(self):
-        # Reentrant: several lazy initialisers (e.g. _ensure_reference_sums, reference_projection)
-        # call reference() while already holding this lock, which a plain Lock would
-        # self-deadlock on.
+        # Reentrant because cache bookkeeping can be nested even though expensive computations
+        # run outside the lock.
         self.lock = threading.RLock()
         self.memo: dict = {}  # (function, params) -> value, for every @cached/_once computation
+        self.inflight: dict = {}  # key -> Future for computations currently owned by another thread
         self.scope: DatasetScope | None = None  # the settings every value here was computed under
 
 

@@ -15,6 +15,7 @@ of ``ctx`` than that.
 from __future__ import annotations
 
 from collections.abc import Callable
+from concurrent.futures import Future
 from dataclasses import dataclass
 from functools import wraps
 from typing import TYPE_CHECKING, Any
@@ -49,23 +50,46 @@ class DatasetScope:
 def _once(store: Any, key: Any, compute: Callable[[], Any]) -> Any:
     """Compute ``compute()`` once per ``key`` and reuse it, thread-safely.
 
-    The double-checked-locking primitive :func:`cached` builds on. Call this directly, instead
+    The per-key single-flight primitive :func:`cached` builds on. Call this directly, instead
     of ``@cached``, for a computation that needs more of ``ctx`` than :class:`DatasetScope`
     exposes — :meth:`~scperteval.context.Context.reference` and its two derivatives are the only
     callers today, since they build a value by calling back into space application, which needs
-    the full ``Context``. One primitive either way, so the locking only has to be got right once.
+    the full ``Context``. Different keys compute outside the bookkeeping lock and may therefore
+    run concurrently; callers requesting the same key wait on one shared future.
 
     ``key`` shares ``CacheStore.memo`` with every ``@cached`` computation, whose keys are always
     ``(function, params)``. Match that shape here too — e.g. ``("reference", ())`` — so anything
     reading the store's keys generically (as a debugger or a test might) sees one consistent shape.
     """
     value = store.memo.get(key, _MISSING)
-    if value is _MISSING:
-        with store.lock:  # re-check under the lock: another thread may have filled it
-            value = store.memo.get(key, _MISSING)
-            if value is _MISSING:
-                value = compute()
-                store.memo[key] = value
+    if value is not _MISSING:
+        return value
+
+    with store.lock:
+        value = store.memo.get(key, _MISSING)
+        if value is not _MISSING:
+            return value
+        future = store.inflight.get(key)
+        owner = future is None
+        if owner:
+            future = Future()
+            store.inflight[key] = future
+
+    if not owner:
+        return future.result()
+
+    try:
+        value = compute()
+    except BaseException as error:
+        with store.lock:
+            store.inflight.pop(key, None)
+            future.set_exception(error)
+        raise
+
+    with store.lock:
+        store.memo[key] = value
+        store.inflight.pop(key, None)
+        future.set_result(value)
     return value
 
 
