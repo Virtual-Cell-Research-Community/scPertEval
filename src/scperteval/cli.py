@@ -12,10 +12,11 @@ from .blocks.spaces import SPACES
 from .calibrators import CALIBRATORS
 from .context import Context
 from .dataset import Dataset
+from .de_options import DE_REFERENCES, DE_TARGETS
 from .predictions import PredictionSet
 from .protocols.resolve import _concrete, _resolve_token, available, resolve_protocols  # noqa: F401 (re-exported)
 from .protocols.table import TABLE
-from .runner import DE_REFERENCES, DE_TARGETS, _resolve_candidates, compute_de, resolve_de_perturbations, run_all
+from .runner import _resolve_candidates, compute_de, resolve_de_perturbations, run_all
 from .sources import SOURCES
 from .types import RunConfig
 

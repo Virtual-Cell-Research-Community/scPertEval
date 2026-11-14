@@ -13,6 +13,7 @@ import scperteval as sp
 from scperteval.api import DatasetDEResults, DEMethodName, EvalResult, Prepared
 from scperteval.blocks.de import DE_METHODS
 from scperteval.cli import main
+from scperteval.de_options import DE_REFERENCES, DE_TARGETS, DEReferenceName, DETargetName
 
 PREP = dict(subsample=400, seed=0, min_cells=10, workers=1)
 
@@ -42,6 +43,11 @@ def test_public_surface():
 
 def test_de_method_literal_matches_registry():
     assert set(get_args(DEMethodName)) == set(DE_METHODS.names())
+
+
+def test_de_option_literals_match_the_shared_runtime_vocabulary():
+    assert set(get_args(DETargetName)) == set(DE_TARGETS)
+    assert set(get_args(DEReferenceName)) == set(DE_REFERENCES)
 
 
 # --- prepare + verbs ---------------------------------------------------------

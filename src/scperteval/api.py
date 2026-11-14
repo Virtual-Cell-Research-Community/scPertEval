@@ -24,9 +24,10 @@ from . import io
 from .blocks.de import DE_METHODS
 from .context import CacheStore, Context
 from .dataset import Dataset
+from .de_options import DEReferenceName, DETargetName
 from .predictions import PredictionSet
 from .protocols.resolve import resolve_protocols
-from .runner import DE_REFERENCES, DE_TARGETS, compute_de, resolve_de_perturbations, run_all
+from .runner import compute_de, resolve_de_perturbations, run_all
 from .sources import SOURCES
 from .types import Protocol, RunConfig
 
@@ -50,10 +51,6 @@ CalibratorName = Literal["drf", "bds"]
 #: The DE backends selectable from :func:`de` / ``de_method`` — mirrors the ``DE_METHODS`` registry's
 #: built-ins (kept in sync by ``tests/test_api.py::test_de_method_literal_matches_registry``).
 DEMethodName = Literal["t-test", "MWU", "t-test_overestim_var"]
-#: Ground-truth cell populations accepted by :func:`de`.
-DETargetName = Literal["gt_half", "gt_all_cells"]
-#: Reference populations accepted by :func:`de`.
-DEReferenceName = Literal["all_perturbed", "control"]
 
 
 # --------------------------------------------------------------------------- result types
@@ -487,10 +484,6 @@ def de(
     """
     _require_prepared(prepared, "de")
     _check_de_method(method)
-    if target not in DE_TARGETS:
-        raise ValueError(f"unsupported DE target {target!r}; available: {', '.join(DE_TARGETS)}")
-    if reference not in DE_REFERENCES:
-        raise ValueError(f"unsupported DE reference {reference!r}; available: {', '.join(DE_REFERENCES)}")
     ctx = prepared._run_context(de_method=method, out_dir=str(out_dir) if out_dir is not None else "results")
     perts = resolve_de_perturbations(ctx, perturbations)
     statistic, pvalue_adj = compute_de(ctx, target=target, reference=reference, perturbations=perts)

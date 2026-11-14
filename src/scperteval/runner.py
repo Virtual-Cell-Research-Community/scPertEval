@@ -10,6 +10,7 @@ from time import perf_counter
 import numpy as np
 from threadpoolctl import threadpool_limits
 
+from .de_options import validate_de_reference, validate_de_target
 from .types import Calibrator, Protocol
 
 #: Generic (positive, negative) control defaults keyed on ``representation`` — the base tier of
@@ -203,10 +204,6 @@ def _run_dataset(p: Protocol, ctx, calibrator: Calibrator, needed: dict):
     return agg, rows, seconds
 
 
-DE_TARGETS = ("gt_half", "gt_all_cells")
-DE_REFERENCES = ("all_perturbed", "control")
-
-
 def resolve_de_perturbations(ctx, perturbations=None):
     """Validate an optional ordered DE subset against the prepared dataset."""
     if perturbations is None:
@@ -231,10 +228,8 @@ def compute_de(ctx, *, target=None, reference="all_perturbed", perturbations=Non
     ``target=None`` preserves the historical behavior by using ``ctx.cfg.truth``.
     """
     target = ctx.cfg.truth if target is None else target
-    if target not in DE_TARGETS:
-        raise ValueError(f"unsupported DE target {target!r}; available: {', '.join(DE_TARGETS)}")
-    if reference not in DE_REFERENCES:
-        raise ValueError(f"unsupported DE reference {reference!r}; available: {', '.join(DE_REFERENCES)}")
+    validate_de_target(target)
+    validate_de_reference(reference)
     selected = resolve_de_perturbations(ctx, perturbations)
 
     def work(pert):
