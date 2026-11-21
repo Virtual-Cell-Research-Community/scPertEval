@@ -40,6 +40,11 @@
   `undefined_reason` instead of being counted as BDS losses (reported and fixed in #39 by
   @psl-schaefer).
 
+### Performance
+
+- One-pass perturbation cell indexing in `Dataset._index()`, cached subsampled control cells in
+  `Context`, and per-key single-flight concurrency in `caching._once()` (from #38 by @psl-schaefer).
+
 ## 0.2.0
 
 ### Added
