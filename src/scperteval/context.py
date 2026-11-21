@@ -14,12 +14,12 @@ from typing import TYPE_CHECKING
 import numpy as np
 
 from .blocks.de import DE_METHODS, _moments
-from .blocks.spaces import SPACES
+from .blocks.spaces import SubsetSpace, resolve_space
 from .caching import DatasetScope, _once, cached
 from .dataset import Dataset, to_dense
 from .reference import Reference
 from .sources import SOURCES
-from .types import Protocol, RunConfig
+from .types import PerturbationDEResult, Protocol, RunConfig
 
 if TYPE_CHECKING:
     from .predictions import PredictionSet
@@ -136,28 +136,24 @@ class Context:
         if any(p.representation == "de" for p in protocols):
             self._ensure_reference_sums()
             self._moments("control", None)
-        # A space may declare a `precompute` hook (see `SpaceRegistry.transform`): run its heavy
-        # setup here, while the machine is idle and BLAS can use every thread, rather than inside
-        # the per-perturbation loop. Repeat calls are cache hits, so the list needs no de-duping.
-        # Runs before the projection loop below so global spaces are ready when it reads them.
-        for p in protocols:
-            meta = SPACES.meta(p.space)
-            if meta.get("precompute") is not None:
-                meta["precompute"](self, meta["value"])
-        for space in {
-            p.space for p in protocols if p.representation == "population" and SPACES.meta(p.space).get("global_space")
-        }:
-            self.reference_projection(space)
+        resolved_spaces = [resolve_space(p.space) for p in protocols]
+        for sp in resolved_spaces:
+            sp.precompute(self)
+        seen_keys = set()
+        for p, sp in zip(protocols, resolved_spaces):
+            if p.representation == "population" and not sp.per_pert and sp.cache_key not in seen_keys:
+                seen_keys.add(sp.cache_key)
+                self.reference_projection(sp)
 
     def view(self, pert: str, source: str, p: Protocol):
         """Return ``source``'s datapoint for ``pert`` in the shape ``p`` consumes."""
         if p.representation == "population":
             if source == "all_perturbed":
                 return self._reference_population(p.space, pert)
-            return SPACES[p.space](self.source(source)(self, pert), self, pert)
+            return resolve_space(p.space).apply(self.source(source)(self, pert), self, pert)
         if p.representation == "centroid":
             v = self.centroid(pert, source, p.centering)
-            return SPACES[p.space](v[None, :], self, pert).ravel()
+            return resolve_space(p.space).apply(v[None, :], self, pert).ravel()
         if p.representation == "de":
             return self._de_view(pert, source, p)
         raise ValueError(f"unknown protocol representation {p.representation!r}")
@@ -183,16 +179,28 @@ class Context:
         return np.asarray(self.source(name)(self, pert), dtype=np.float64).ravel()
 
     def _de_view(self, pert, source, p):
-        """Return the DE view: the truth's PerturbationDEResult, or a candidate's ``|statistic|`` ranking.
+        """Return symmetric signed DE results for truth and candidate, restricted to ``p.space``.
 
         The negative candidate is tested against ``neg_reference`` (e.g. control) rather than
-        ``reference`` (the all-perturbed sample), the hybrid DE setup.
+        ``reference`` (the all-perturbed sample), the hybrid DE setup. When ``p.space`` narrows the
+        gene axis (e.g. ``hvg(2000)`` or ``full() - own_target()``), both truth and candidate
+        results are sliced to that gene universe without altering biological DE p-values.
         """
-        if source == self.cfg.truth:
-            return self.de(pert, self.cfg.truth, p.reference)
+        sp = resolve_space(p.space)
+        if not isinstance(sp, SubsetSpace):
+            raise TypeError(f"DE protocol {p.name!r} requires a gene-subset space, got {p.space!r}")
         is_negative = source == self.candidates.get("negative")
         reference = p.neg_reference if (is_negative and p.neg_reference) else p.reference
-        return np.abs(self.de(pert, source, reference).statistic)
+        res = self.de(pert, source, reference)
+        keep = sp.select(self, pert)
+        if isinstance(keep, slice) and keep == slice(None):
+            return res
+        return PerturbationDEResult(
+            statistic=res.statistic[keep],
+            pvalue=res.pvalue[keep],
+            pvalue_adj=res.pvalue_adj[keep],
+            extra=res.extra,
+        )
 
     def de(self, pert, source, reference="all_perturbed"):
         """Differential expression for one (source vs reference) comparison, cached.
@@ -255,17 +263,16 @@ class Context:
         Project the whole sample (cached for global spaces) then drop its rows.
         """
         ref = self.reference()
-        if SPACES.meta(space).get("global_space"):
-            proj = self.reference_projection(space)
-        else:
-            proj = SPACES[space](ref.cells, self, pert)
+        sp = resolve_space(space)
+        proj = sp.apply(ref.cells, self, pert) if sp.per_pert else self.reference_projection(sp)
         keep = ref.keep(pert)
         return proj if keep is None else proj[keep]
 
     def reference_projection(self, space):
         """The reference projected to a perturbation-independent space, cached once."""
+        sp = resolve_space(space)
         return _once(
-            self._store, ("reference_projection", (space,)), lambda: SPACES[space](self.reference().cells, self, None)
+            self._store, ("reference_projection", (sp.cache_key,)), lambda: sp.apply(self.reference().cells, self, None)
         )
 
     def _ensure_reference_sums(self):

@@ -20,8 +20,10 @@ from __future__ import annotations
 import numpy as np
 
 from ...dataset import to_dense
-from .helpers import control_dispersion, pca_for, targeted_genes
-from .registry import OPS, SPACES
+from .helpers import control_dispersion, pca_for, subset_pca_for, targeted_genes
+from .registry import OPS, SPACES, UndefinedSpace
+
+_DEG_RANKINGS = ("significance", "absolute_effect")
 
 
 @SPACES.subset("full", description="all genes, no transform")
@@ -31,15 +33,44 @@ def full(ctx):
 
 
 @SPACES.subset("top", default=50, description="top {v} genes by ground-truth effect size")
-def top(ctx, pert, k):
+def top(ctx, pert, k, *, reference: str = "all_perturbed"):
     """The k strongest ground-truth effect sizes for this perturbation, by absolute value."""
-    return np.argsort(-np.abs(ctx.de(pert, ctx.cfg.truth).statistic))[:k]
+    return np.argsort(-np.abs(ctx.de(pert, ctx.cfg.truth, reference).statistic))[:k]
 
 
 @SPACES.subset("degs", default=0.05, description="ground-truth DEGs at adjusted p < {v}")
-def degs(ctx, pert, padj):
-    """Ground-truth differentially expressed genes for this perturbation."""
-    return np.where(ctx.de(pert, ctx.cfg.truth).pvalue_adj < padj)[0]
+def degs(
+    ctx,
+    pert,
+    padj,
+    *,
+    top_k: int | None = None,
+    rank_by: str = "significance",
+    reference: str = "all_perturbed",
+):
+    """Ground-truth differentially expressed genes for this perturbation.
+
+    Optionally cap at ``top_k`` genes ordered deterministically by ``"significance"`` or
+    ``"absolute_effect"``, and choose the DE ``reference`` population.
+    """
+    if padj is not None and not 0 < padj <= 1:
+        raise ValueError("padj must be in (0, 1]")
+    if top_k is not None and top_k <= 0:
+        raise ValueError("top_k must be positive")
+    if rank_by not in _DEG_RANKINGS:
+        raise ValueError(f"unknown rank_by {rank_by!r}; expected {list(_DEG_RANKINGS)}")
+    de = ctx.de(pert, ctx.cfg.truth, reference)
+    keep = np.isfinite(de.statistic) & np.isfinite(de.pvalue_adj)
+    if padj is not None:
+        keep &= de.pvalue_adj < padj
+    candidates = np.flatnonzero(keep)
+    if top_k is None:
+        return candidates
+    if rank_by == "significance":
+        order = np.lexsort((candidates, -np.abs(de.statistic[candidates]), de.pvalue_adj[candidates]))
+    else:
+        order = np.lexsort((candidates, de.pvalue_adj[candidates], -np.abs(de.statistic[candidates])))
+    return candidates[order[:top_k]]
 
 
 @SPACES.subset("heg", default=1000, description="top {v} genes by control-condition expression")
@@ -67,8 +98,34 @@ def perturbed_genes(ctx):
     return targeted_genes(ctx)
 
 
+@SPACES.subset("own_target", description="gene(s) targeted by the current perturbation")
+def own_target(ctx, pert):
+    """The gene(s) targeted by ``pert`` alone — compose via ``|`` or ``-`` with any subset space."""
+    idx = ctx.ds.target_gene_indices(pert)
+    if idx.size == 0:
+        raise UndefinedSpace(
+            "target_gene_not_measured",
+            f"target gene(s) for {pert!r} are not present in var_names.",
+        )
+    return idx
+
+
+def _pca_subset_apply(X, ctx, subset, k):
+    keep, fitted = subset_pca_for(ctx, subset, k)
+    return fitted.transform(to_dense(X[:, keep]))[:, :k]
+
+
+def _pca_subset_precompute(ctx, subset, k):
+    subset_pca_for(ctx, subset, k)
+
+
 @SPACES.transform(
-    "pca", default=50, precompute=pca_for, description="top {v} principal components (fit on the dataset)"
+    "pca",
+    default=50,
+    precompute=pca_for,
+    subset_apply=_pca_subset_apply,
+    subset_precompute=_pca_subset_precompute,
+    description="top {v} principal components (fit on the dataset)",
 )
 def pca(X, ctx, k):
     """The top k principal components, from a PCA fit once on the dataset and shared."""

@@ -25,7 +25,11 @@ class Dataset:
         self.adata = adata
         self.seed = cfg.seed  # subsampling reproducibility (see _cap)
         self.control_label = cfg.control_label
+        self.target_key = cfg.target_key
+        if self.target_key is not None and self.target_key not in adata.obs.columns:
+            raise ValueError(f"target_key {self.target_key!r} not found in adata.obs")
         self.var_names = np.asarray(adata.var_names)
+        self._gene_positions = {str(g): i for i, g in enumerate(self.var_names)}
         self.pert = np.asarray(adata.obs[cfg.perturbation_key]).astype(str)
         self.control_idx = np.where(self.pert == self.control_label)[0]
         self._index(cfg.min_cells)
@@ -93,6 +97,21 @@ class Dataset:
     def control_mean(self) -> np.ndarray:
         """Pseudobulk centroid of the control cells."""
         return np.asarray(self.adata.X[self.control_idx].mean(0)).ravel()
+
+    def target_gene_indices(self, pert: str) -> np.ndarray:
+        """Indices into ``var_names`` for the gene(s) targeted by ``pert``.
+
+        Reads ``adata.obs[target_key]`` when ``target_key`` was configured, otherwise splits the
+        perturbation label on ``"+"``. Tokens not present in ``var_names`` are skipped.
+        """
+        tokens: set[str] = set()
+        if self.target_key is not None:
+            rows = self.pert == pert
+            for value in self.adata.obs.loc[rows, self.target_key].dropna().astype(str).unique():
+                tokens.update(value.split("+"))
+        else:
+            tokens.update(pert.split("+"))
+        return np.array(sorted({self._gene_positions[t] for t in tokens if t in self._gene_positions}), dtype=int)
 
     def _cap(self, idx: np.ndarray, cap: int, *tags) -> np.ndarray:
         if len(idx) <= cap:

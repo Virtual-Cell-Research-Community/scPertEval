@@ -10,6 +10,7 @@ from time import perf_counter
 import numpy as np
 from threadpoolctl import threadpool_limits
 
+from .blocks.spaces import UndefinedSpace
 from .types import Calibrator, MetricOutcome, Protocol
 
 #: Generic (positive, negative) control defaults keyed on ``representation`` — the base tier of
@@ -192,8 +193,11 @@ def _evaluate_per_perturbation(p: Protocol, ctx, candidates: dict[str, str]):
 
     def work(pert):
         ctx.current_pert = pert
-        gt = ctx.view(pert, ctx.cfg.truth, p)
-        return {name: _as_outcome(p.metric(gt, ctx.view(pert, src, p), ctx)) for name, src in candidates.items()}
+        try:
+            gt = ctx.view(pert, ctx.cfg.truth, p)
+            return {name: _as_outcome(p.metric(gt, ctx.view(pert, src, p), ctx)) for name, src in candidates.items()}
+        except UndefinedSpace as error:
+            return {name: MetricOutcome(float("nan"), error.reason) for name in candidates}
 
     perts = ctx.perturbations
     with ThreadPoolExecutor(max_workers=_n_workers(ctx.cfg)) as pool:
@@ -212,8 +216,12 @@ def _evaluate_dataset(p: Protocol, ctx, candidates: dict[str, str]):
             out.append(ctx.view(pert, source, p))
         return out
 
-    gt = collect(ctx.cfg.truth)
-    scores = {name: p.metric(gt, collect(src), ctx) for name, src in candidates.items()}
+    try:
+        gt = collect(ctx.cfg.truth)
+        scores = {name: p.metric(gt, collect(src), ctx) for name, src in candidates.items()}
+    except UndefinedSpace as error:
+        raws_list = [{name: MetricOutcome(float("nan"), error.reason) for name in candidates} for _ in perts]
+        return perts, raws_list
     raws_list = [{name: _as_outcome(scores[name][i]) for name in candidates} for i in range(len(perts))]
     return perts, raws_list
 

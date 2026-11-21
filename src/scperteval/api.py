@@ -272,6 +272,7 @@ def prepare(
     min_cells: int = 30,
     perturbation_key: str = "perturbation",
     control_label: str = "control",
+    target_key: str | None = None,
     workers: int = 0,
     name: str | None = None,
     sources: dict[str, np.ndarray] | None = None,
@@ -324,6 +325,7 @@ def prepare(
         min_cells=min_cells,
         perturbation_key=perturbation_key,
         control_label=control_label,
+        target_key=target_key,
         workers=workers,
     )
     ds = _to_dataset(dataset, cfg)
