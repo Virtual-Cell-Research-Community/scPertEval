@@ -104,27 +104,32 @@ def test_de_single_method(dataset_adata):
     assert stat.shape == padj.shape == (4, 60)
 
 
-def test_de_supports_all_cells_against_control(dataset_adata):
-    p = prep(dataset_adata, [])
-    default = sp.de(p, "t-test").statistic
-    observed_vs_control = sp.de(
-        p,
-        "t-test",
-        target="gt_all_cells",
-        reference="control",
-    ).statistic
-    assert observed_vs_control.shape == default.shape == (4, 60)
-    assert not np.allclose(observed_vs_control.to_numpy(), default.to_numpy())
-
-
-def test_de_selects_requested_perturbations_in_order(dataset_adata):
+@pytest.mark.parametrize("target", DE_TARGETS)
+@pytest.mark.parametrize("reference", DE_REFERENCES)
+def test_de_supports_every_target_reference_combination(dataset_adata, target, reference):
     result = sp.de(
         prep(dataset_adata, []),
         "t-test",
+        target=target,
+        reference=reference,
+    )
+    assert result.statistic.shape == result.pvalue_adj.shape == (4, 60)
+    assert np.isfinite(result.statistic.to_numpy()).all()
+
+
+def test_de_selects_requested_perturbations_in_order(dataset_adata):
+    prepared = prep(dataset_adata, [])
+    complete = sp.de(prepared, "t-test")
+    selected = sp.de(
+        prepared,
+        "t-test",
         perturbations=["pertC", "pertA"],
     )
-    assert list(result.statistic.index) == ["pertC", "pertA"]
-    assert result.statistic.shape == (2, 60)
+    expected = ["pertC", "pertA"]
+    assert list(selected.statistic.index) == expected
+    assert selected.statistic.shape == (2, 60)
+    pd.testing.assert_frame_equal(selected.statistic, complete.statistic.loc[expected])
+    pd.testing.assert_frame_equal(selected.pvalue_adj, complete.pvalue_adj.loc[expected])
 
 
 def test_de_rejects_unknown_or_duplicate_perturbations(dataset_adata):

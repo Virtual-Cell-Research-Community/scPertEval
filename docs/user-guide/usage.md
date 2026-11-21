@@ -131,8 +131,9 @@ scperteval de data/wessels23.h5ad --method MWU --target gt_all_cells --reference
 The target can be the deterministic split half (`gt_half`) or all observed cells
 (`gt_all_cells`). The reference can be the leave-one-perturbation-out all-perturbed sample
 (`all_perturbed`) or non-targeting controls (`control`). Both reference populations are capped by
-`--subsample` (default 8,192) and sampled deterministically using `--seed` (default 42). The HDF5
-file records the target, reference, cap, and seed as root attributes.
+`--subsample` (default 8,192); populations exceeding the cap are sampled deterministically using
+`--seed` (default 42), while smaller populations are retained in full. The HDF5 file records the
+target, reference, cap, and seed as root attributes.
 For cost pilots or sharded runs, `--perturbations-file selected.txt` restricts computation to the
 listed perturbation labels while retaining the full dataset as the source of both references.
 
