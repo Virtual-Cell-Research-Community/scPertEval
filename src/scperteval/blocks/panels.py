@@ -122,8 +122,18 @@ class GenePanel:
 
 
 def _target_indices(ctx, pert: str) -> np.ndarray:
+    tokens: set[str] = set()
+    obs = ctx.ds.adata.obs
+    if "target_gene" in obs.columns:
+        rows = np.asarray(ctx.ds.pert) == pert
+        for value in obs.loc[rows, "target_gene"].dropna().astype(str).unique():
+            tokens.update(value.split("+"))
+    if not tokens:
+        # Context-transfer manifests may namespace otherwise bare genetic targets as
+        # ``dataset::GENE``.  Explicit ``obs['target_gene']`` remains authoritative when present.
+        tokens.update(pert.rsplit("::", 1)[-1].split("+"))
     positions = {str(g): i for i, g in enumerate(ctx.ds.var_names)}
-    return np.array(sorted({positions[token] for token in pert.split("+") if token in positions}), dtype=int)
+    return np.array(sorted({positions[token] for token in tokens if token in positions}), dtype=int)
 
 
 def panel_space(panel: GenePanel) -> str:

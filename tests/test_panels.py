@@ -41,6 +41,20 @@ def test_target_policy_reports_unmeasured_target():
         GenePanel("all", target_policy="exclude_own_target").select(ctx, "pertC")
 
 
+def test_target_policy_prefers_explicit_target_gene_for_namespaced_conditions():
+    adata = make_dataset()
+    adata.var_names = ["pertA", "pertB", *[f"g{i}" for i in range(58)]]
+    original = adata.obs["perturbation"].astype(str)
+    adata.obs["target_gene"] = original
+    adata.obs["perturbation"] = original.map(
+        {"pertA": "dataset-a::pertA", "pertB": "dataset-a::pertB", "control": "control"}
+    )
+    cfg = make_cfg()
+    ctx = Context(Dataset(adata, cfg), cfg)
+    selected = GenePanel("all", target_policy="exclude_own_target").select(ctx, "dataset-a::pertA")
+    assert 0 not in selected
+
+
 def test_panel_space_applies_the_same_selection_to_cells():
     ctx = _context()
     panel = GenePanel("deg", top_k=4, padj_max=0.05, rank_by="absolute_effect")
