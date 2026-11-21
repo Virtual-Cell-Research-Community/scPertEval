@@ -13,6 +13,7 @@ import scperteval as sp
 from scperteval.api import DatasetDEResults, DEMethodName, EvalResult, Prepared
 from scperteval.blocks.de import DE_METHODS
 from scperteval.cli import main
+from scperteval.de_options import DE_REFERENCES, DE_TARGETS, DEReferenceName, DETargetName
 
 PREP = dict(subsample=400, seed=0, min_cells=10, workers=1)
 
@@ -42,6 +43,11 @@ def test_public_surface():
 
 def test_de_method_literal_matches_registry():
     assert set(get_args(DEMethodName)) == set(DE_METHODS.names())
+
+
+def test_de_option_literals_match_the_shared_runtime_vocabulary():
+    assert set(get_args(DETargetName)) == set(DE_TARGETS)
+    assert set(get_args(DEReferenceName)) == set(DE_REFERENCES)
 
 
 # --- prepare + verbs ---------------------------------------------------------
@@ -96,6 +102,54 @@ def test_de_single_method(dataset_adata):
     assert np.isfinite(d.statistic.to_numpy()).all()
     stat, padj = d  # NamedTuple unpacks
     assert stat.shape == padj.shape == (4, 60)
+
+
+@pytest.mark.parametrize("target", DE_TARGETS)
+@pytest.mark.parametrize("reference", DE_REFERENCES)
+def test_de_supports_every_target_reference_combination(dataset_adata, target, reference):
+    result = sp.de(
+        prep(dataset_adata, []),
+        "t-test",
+        target=target,
+        reference=reference,
+    )
+    assert result.statistic.shape == result.pvalue_adj.shape == (4, 60)
+    assert np.isfinite(result.statistic.to_numpy()).all()
+
+
+def test_de_selects_requested_perturbations_in_order(dataset_adata):
+    prepared = prep(dataset_adata, [])
+    complete = sp.de(prepared, "t-test")
+    selected = sp.de(
+        prepared,
+        "t-test",
+        perturbations=["pertC", "pertA"],
+    )
+    expected = ["pertC", "pertA"]
+    assert list(selected.statistic.index) == expected
+    assert selected.statistic.shape == (2, 60)
+    pd.testing.assert_frame_equal(selected.statistic, complete.statistic.loc[expected])
+    pd.testing.assert_frame_equal(selected.pvalue_adj, complete.pvalue_adj.loc[expected])
+
+
+def test_de_rejects_unknown_or_duplicate_perturbations(dataset_adata):
+    prepared = prep(dataset_adata, [])
+    with pytest.raises(ValueError, match="unknown perturbation"):
+        sp.de(prepared, "t-test", perturbations=["missing"])
+    with pytest.raises(ValueError, match="duplicate perturbation"):
+        sp.de(prepared, "t-test", perturbations=["pertA", "pertA"])
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "message"),
+    [
+        ({"target": "tech_dup"}, "target"),
+        ({"reference": "global_mean"}, "reference"),
+    ],
+)
+def test_de_rejects_unsupported_comparison(dataset_adata, kwargs, message):
+    with pytest.raises(ValueError, match=message):
+        sp.de(prep(dataset_adata, []), "t-test", **kwargs)
 
 
 def test_de_rejects_unknown_method(dataset_adata):
@@ -218,6 +272,8 @@ def test_out_dir_writes_files(dataset_adata, tmp_path):
 
     with h5py.File(h5[0]) as f:
         assert f["t-test"]["statistic"].shape == (4, 60)
+        assert f.attrs["target"] == "gt_half"
+        assert f.attrs["reference"] == "all_perturbed"
         assert f["genes"].shape == (60,)
 
 

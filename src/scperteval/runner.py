@@ -10,6 +10,7 @@ from time import perf_counter
 import numpy as np
 from threadpoolctl import threadpool_limits
 
+from .de_options import validate_de_reference, validate_de_target
 from .types import Calibrator, Protocol
 
 #: Generic (positive, negative) control defaults keyed on ``representation`` — the base tier of
@@ -203,19 +204,40 @@ def _run_dataset(p: Protocol, ctx, calibrator: Calibrator, needed: dict):
     return agg, rows, seconds
 
 
-def compute_de(ctx):
+def resolve_de_perturbations(ctx, perturbations=None):
+    """Validate an optional ordered DE subset against the prepared dataset."""
+    if perturbations is None:
+        return list(ctx.perturbations)
+    selected = list(perturbations)
+    if len(selected) != len(set(selected)):
+        raise ValueError("duplicate perturbation in DE selection")
+    unknown = sorted(set(selected) - set(ctx.perturbations))
+    if unknown:
+        raise ValueError(f"unknown perturbation(s) in DE selection: {', '.join(unknown)}")
+    if not selected:
+        raise ValueError("DE perturbation selection is empty")
+    return selected
+
+
+def compute_de(ctx, *, target=None, reference="all_perturbed", perturbations=None):
     """Per-gene DE matrices for ``ctx.cfg.de_method``, for export.
 
     Returns ``(statistic, pvalue_adj)`` matrices (perturbations x genes) for the
-    ground-truth-vs-all-perturbed differential expression under the context's DE method.
+    requested target-vs-reference comparison under the context's DE method.
+
+    ``target=None`` uses the target source configured in ``ctx.cfg.truth``.
     """
+    target = ctx.cfg.truth if target is None else target
+    validate_de_target(target)
+    validate_de_reference(reference)
+    selected = resolve_de_perturbations(ctx, perturbations)
 
     def work(pert):
-        d = ctx.de(pert, ctx.cfg.truth, "all_perturbed")
+        d = ctx.de(pert, target, reference)
         return d.statistic, d.pvalue_adj
 
     with ThreadPoolExecutor(max_workers=_n_workers(ctx.cfg)) as pool:
-        res = list(pool.map(work, ctx.perturbations))
+        res = list(pool.map(work, selected))
     return np.vstack([r[0] for r in res]), np.vstack([r[1] for r in res])
 
 

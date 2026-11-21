@@ -39,13 +39,20 @@ class Dataset:
 
     def _index(self, min_cells: int):
         rng = np.random.default_rng(self.seed)
+        self.indices: dict[str, np.ndarray] = {}
         self.halves: dict[str, tuple[np.ndarray, np.ndarray]] = {}
         self.perturbations: list[str] = []
         means = []
-        for p in np.unique(self.pert[self.pert != self.control_label]):
-            idx = np.where(self.pert == p)[0]
+        treated_idx = np.flatnonzero(self.pert != self.control_label)
+        perturbations, inverse = np.unique(self.pert[treated_idx], return_inverse=True)
+        order = np.argsort(inverse, kind="stable")
+        grouped_idx = treated_idx[order]
+        offsets = np.concatenate(([0], np.cumsum(np.bincount(inverse, minlength=len(perturbations)))))
+        for p, start, stop in zip(perturbations, offsets[:-1], offsets[1:], strict=True):
+            idx = grouped_idx[start:stop]
             if len(idx) < min_cells:
                 continue
+            self.indices[p] = idx
             shuffled = idx.copy()
             rng.shuffle(shuffled)
             h = len(shuffled) // 2
@@ -63,7 +70,7 @@ class Dataset:
         elif half == "second":
             idx = self.halves[pert][1]
         else:
-            idx = np.where(self.pert == pert)[0]
+            idx = self.indices[pert]
         return self.adata.X[idx]
 
     def control_cells(self, cap: int) -> np.ndarray:

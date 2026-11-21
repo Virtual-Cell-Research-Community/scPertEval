@@ -24,14 +24,15 @@ from . import io
 from .blocks.de import DE_METHODS
 from .context import CacheStore, Context
 from .dataset import Dataset
+from .de_options import DEReferenceName, DETargetName
 from .predictions import PredictionSet
 from .protocols.resolve import resolve_protocols
-from .runner import compute_de, run_all
+from .runner import compute_de, resolve_de_perturbations, run_all
 from .sources import SOURCES
 from .types import Protocol, RunConfig
 
 if TYPE_CHECKING:  # annotation-only; keeps ``import scperteval`` from eagerly importing anndata
-    from collections.abc import Callable
+    from collections.abc import Callable, Sequence
 
     from anndata import AnnData
 
@@ -451,9 +452,12 @@ def de(
     prepared: Prepared,
     method: DEMethodName = "t-test",
     *,
+    target: DETargetName = "gt_half",
+    reference: DEReferenceName = "all_perturbed",
+    perturbations: Sequence[str] | None = None,
     out_dir: str | Path | None = None,
 ) -> DatasetDEResults:
-    """Compute per-gene differential expression (ground truth vs all-perturbed) for one method.
+    """Compute per-gene differential expression for one target/reference comparison.
 
     Parameters
     ----------
@@ -462,6 +466,14 @@ def de(
     method : str, optional
         The DE backend (default ``"t-test"``). Different methods reuse the same prepared dataset,
         cached separately — no reload.
+    target : {"gt_half", "gt_all_cells"}, optional
+        Target cells for each perturbation: its deterministic first half (the default) or all
+        observed cells.
+    reference : {"all_perturbed", "control"}, optional
+        Comparison population: the capped all-perturbed sample with the current perturbation
+        removed (the default), or the capped non-targeting controls.
+    perturbations : sequence of str, optional
+        Ordered subset to compute. By default, compute every eligible perturbation.
     out_dir : str or pathlib.Path, optional
         If given, also write the HDF5 export there (as the CLI does).
 
@@ -473,14 +485,21 @@ def de(
     _require_prepared(prepared, "de")
     _check_de_method(method)
     ctx = prepared._run_context(de_method=method, out_dir=str(out_dir) if out_dir is not None else "results")
-    ctx._ensure_reference_sums()
-    statistic, pvalue_adj = compute_de(ctx)
-    perts = list(ctx.perturbations)
+    perts = resolve_de_perturbations(ctx, perturbations)
+    statistic, pvalue_adj = compute_de(ctx, target=target, reference=reference, perturbations=perts)
     genes = [str(g) for g in ctx.ds.var_names]
     result = DatasetDEResults(
         statistic=pd.DataFrame(statistic, index=perts, columns=genes),
         pvalue_adj=pd.DataFrame(pvalue_adj, index=perts, columns=genes),
     )
     if out_dir is not None:
-        io.write_de(ctx.cfg, ctx.ds.var_names, ctx.perturbations, {method: (statistic, pvalue_adj)}, _stamp())
+        io.write_de(
+            ctx.cfg,
+            ctx.ds.var_names,
+            perts,
+            {method: (statistic, pvalue_adj)},
+            _stamp(),
+            target=target,
+            reference=reference,
+        )
     return result

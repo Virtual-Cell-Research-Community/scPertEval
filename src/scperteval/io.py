@@ -99,7 +99,16 @@ def _write_timing(cfg, timed: list, timestamp: str) -> Path:
     return path
 
 
-def write_de(cfg, genes, perturbations, results: dict, timestamp: str) -> Path:
+def write_de(
+    cfg,
+    genes,
+    perturbations,
+    results: dict,
+    timestamp: str,
+    *,
+    target: str = "gt_half",
+    reference: str = "all_perturbed",
+) -> Path:
     """Write per-gene DE (statistic + adjusted p) per method to an HDF5 file.
 
     Layout: ``genes``, ``perturbations``, and one group per method holding
@@ -111,6 +120,10 @@ def write_de(cfg, genes, perturbations, results: dict, timestamp: str) -> Path:
     out_dir.mkdir(parents=True, exist_ok=True)
     path = out_dir / f"{Path(cfg.dataset).stem}__{cfg.de_method}__{timestamp}__de.h5"
     with h5py.File(path, "w") as f:
+        f.attrs["target"] = target
+        f.attrs["reference"] = reference
+        f.attrs["subsample"] = cfg.subsample
+        f.attrs["seed"] = cfg.seed
         f.create_dataset("genes", data=np.asarray(genes, dtype="S"))
         f.create_dataset("perturbations", data=np.asarray(perturbations, dtype="S"))
         for method, (stat, padj) in results.items():
