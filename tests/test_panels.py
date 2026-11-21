@@ -27,6 +27,13 @@ def test_deg_panel_is_deterministic_and_significance_gated():
     assert panel.select(ctx, "pertA").tolist() == selected.tolist()
 
 
+def test_panel_names_preserve_distinct_float_thresholds():
+    left = GenePanel("deg", padj_max=0.05, rank_by="significance")
+    right = GenePanel("deg", padj_max=0.05000001, rank_by="significance")
+    assert left.name != right.name
+    assert panel_space(left) != panel_space(right)
+
+
 def test_target_policy_can_force_include_or_exclude_own_target():
     ctx = _context()
     included = GenePanel("hvg", top_k=2, target_policy="force_include_target").select(ctx, "pertA")

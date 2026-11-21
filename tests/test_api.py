@@ -183,10 +183,19 @@ def test_concrete_protocol_objects_are_supported(dataset_adata):
     from scperteval.protocols import metrics
     from scperteval.types import Protocol
 
-    protocol = Protocol("external_mae", metrics.mse, representation="centroid", better="lower", perfect=0.0)
+    protocol = Protocol("external_mse", metrics.mse, representation="centroid", better="lower", perfect=0.0)
     prepared = prep(dataset_adata, protocol)
     result = sp.calibrate(prepared, protocol)
-    assert result.per_perturbation["protocol"].unique().tolist() == ["external_mae"]
+    assert result.per_perturbation["protocol"].unique().tolist() == ["external_mse"]
+
+
+def test_concrete_protocol_cannot_shadow_curated_name(dataset_adata):
+    from scperteval.protocols import metrics
+    from scperteval.types import Protocol
+
+    misleading = Protocol("mse", metrics.mae, representation="centroid", better="lower", perfect=0.0)
+    with pytest.raises(ValueError, match="conflicts with a curated protocol"):
+        prep(dataset_adata, misleading)
 
 
 def test_concrete_protocol_name_collisions_are_rejected(dataset_adata):
@@ -212,6 +221,14 @@ def test_truth_availability_self_evaluates_without_predictions(dataset_adata):
     assert len(availability) == 8
     assert availability["ground_truth_defined"].all()
     assert set(availability["protocol"]) == {"external_mse", "external_pearson"}
+
+
+def test_truth_availability_uses_dataset_scope(dataset_adata):
+    prepared = prep(dataset_adata, "rank")
+    availability = sp.truth_availability(prepared, "rank")
+    assert len(availability) == 4
+    assert availability["ground_truth_defined"].all()
+    assert availability["self_score"].eq(0.0).all()
 
 
 def test_out_dir_no_collision_across_protocols(dataset_adata, tmp_path):

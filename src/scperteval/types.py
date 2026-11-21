@@ -181,7 +181,8 @@ class Calibrator:
     name: str
     #: Calibrator inputs (candidate names) it needs — e.g. ``("positive", "negative")``.
     requires: tuple[str, ...]
-    #: ``(raws: dict, protocol: Protocol) -> float`` — combines raw control values into one per-perturbation calibrated score.
+    #: ``(raws: dict, protocol: Protocol) -> float | MetricOutcome`` — combines raw controls into
+    #: one per-perturbation score; structured outcomes preserve undefined reasons.
     per_pert: Callable
     #: ``(values: numpy.ndarray) -> dict`` — reduces per-perturbation scores into summary statistics (e.g. ``{"mean": …, "median": …}``).
     aggregate: Callable

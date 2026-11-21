@@ -22,6 +22,8 @@ Two protocol fields control what the metric receives:
 
 from __future__ import annotations
 
+from typing import Any
+
 import numpy as np
 from scipy.stats import spearmanr
 from sklearn.metrics import average_precision_score, explained_variance_score, r2_score, roc_auc_score
@@ -142,7 +144,8 @@ def spearman(gt, prediction, ctx):
         return float("nan")
     if np.ptp(prediction) == 0:
         return 0.0
-    return float(spearmanr(gt, prediction).statistic)
+    result: Any = spearmanr(gt, prediction)
+    return float(result.statistic)
 
 
 @_doc(params=_CENTROID)

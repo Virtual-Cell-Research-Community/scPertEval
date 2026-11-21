@@ -12,6 +12,7 @@ Re-exported at the package root, e.g. ``scperteval.calibrate(...)``.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass, replace
 from datetime import datetime
 from pathlib import Path
@@ -26,9 +27,9 @@ from .context import CacheStore, Context
 from .dataset import Dataset
 from .predictions import PredictionSet
 from .protocols.resolve import resolve_protocol_inputs
-from .runner import compute_de, run_all
+from .runner import compute_de, evaluate_sources, run_all
 from .sources import SOURCES
-from .types import MetricOutcome, Protocol, RunConfig
+from .types import Protocol, RunConfig
 
 if TYPE_CHECKING:  # annotation-only; keeps ``import scperteval`` from eagerly importing anndata
     from collections.abc import Callable
@@ -265,7 +266,7 @@ def _apply_center_on(proto: Protocol, center_on: str, ctx: Context) -> Protocol:
 
 def prepare(
     dataset: str | Path | AnnData,
-    protocols: str | Protocol | list[str | Protocol],
+    protocols: str | Protocol | Sequence[str | Protocol],
     *,
     subsample: int = 8192,
     seed: int = 42,
@@ -291,10 +292,12 @@ def prepare(
         A preprocessed ``.h5ad`` path, or an in-memory AnnData. If an AnnData, the handle holds a
         reference to it (not a copy) — do not mutate it while the handle is in use, or results
         become inconsistent.
-    protocols : str or list of str
-        The protocol(s) you intend to evaluate — used to precompute their spaces up front (pass
-        ``"all"`` for the whole catalog, or ``[]`` if you only need :func:`de` / no spaces). A verb
-        may still run a protocol not declared here; its space is then computed on first use.
+    protocols : str or Protocol or sequence of str or Protocol
+        The protocol(s) you intend to evaluate — registered names use the same specification
+        language as the CLI, while concrete :class:`~scperteval.types.Protocol` objects let Python
+        callers compose analysis-specific protocols without adding them to the curated CLI catalog.
+        Pass ``"all"`` for the whole catalog, or ``[]`` if you only need :func:`de` / no spaces. A
+        verb may still run a protocol not declared here; its space is then computed on first use.
     subsample, seed, min_cells, perturbation_key, control_label, workers, name
         Dataset/run knobs fixed for the handle; see :class:`~scperteval.types.RunConfig`.
     sources : dict[str, numpy.ndarray], optional
@@ -348,8 +351,9 @@ def calibrate(
     ----------
     prepared : Prepared
         A handle from :func:`prepare`.
-    protocol : str
-        A single protocol spec — a name (``"pearson_ctrl"``) or a tunable one (``"mse_top_k=30"``).
+    protocol : str or Protocol
+        A single registered protocol spec — a name (``"pearson_ctrl"``) or a tunable one
+        (``"mse_top_k=30"``) — or one fully concrete :class:`~scperteval.types.Protocol` object.
     de_method : str, optional
         DE backend for any DE-dependent part of the protocol (default ``"t-test"``).
     calibrator : {"drf", "bds"}, optional
@@ -409,8 +413,8 @@ def score(
     ----------
     prepared : Prepared
         A handle from :func:`prepare` (the ground-truth dataset).
-    protocol : str
-        A single protocol spec (see :func:`calibrate`).
+    protocol : str or Protocol
+        A single registered or concrete protocol (see :func:`calibrate`).
     predictions : str or pathlib.Path or anndata.AnnData
         Predicted cells — the same genes and perturbation labels as the dataset.
     de_method : str, optional
@@ -487,7 +491,7 @@ def de(
 
 def truth_availability(
     prepared: Prepared,
-    protocols: str | Protocol | list[str | Protocol],
+    protocols: str | Protocol | Sequence[str | Protocol],
     *,
     de_method: DEMethodName = "t-test",
 ) -> pd.DataFrame:
@@ -497,9 +501,6 @@ def truth_availability(
     the observed ground truth supplied on both sides, so a non-finite score or structured reason
     identifies a protocol/data eligibility problem rather than model behaviour.
     """
-    from .blocks.panels import UndefinedPanel
-    from .runner import _metric_outcome
-
     _require_prepared(prepared, "truth_availability")
     _check_de_method(de_method)
     specs = [protocols] if isinstance(protocols, (str, Protocol)) else list(protocols)
@@ -512,13 +513,9 @@ def truth_availability(
     ctx.warm(resolved)
     rows = []
     for protocol in resolved:
-        for pert in ctx.perturbations:
-            ctx.current_pert = pert
-            try:
-                truth = ctx.view(pert, ctx.cfg.truth, protocol)
-                outcome = _metric_outcome(protocol, truth, truth, ctx)
-            except UndefinedPanel as error:
-                outcome = MetricOutcome(float("nan"), error.reason)
+        perts, outcomes = evaluate_sources(protocol, ctx, {"truth": ctx.cfg.truth})
+        for pert, raw in zip(perts, outcomes):
+            outcome = raw["truth"]
             rows.append(
                 {
                     "protocol": protocol.name,

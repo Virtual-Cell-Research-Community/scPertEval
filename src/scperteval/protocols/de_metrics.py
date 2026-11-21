@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import Any
 
 import numpy as np
 from scipy.stats import spearmanr
-from sklearn.metrics import average_precision_score, f1_score, precision_score, roc_auc_score
+from sklearn.metrics import average_precision_score, roc_auc_score
 
 from ..blocks.panels import GenePanel, UndefinedPanel
 from ..types import MetricOutcome, PerturbationDEResult
@@ -51,6 +52,17 @@ def _top_mask(scores: np.ndarray, k: int) -> np.ndarray:
     return mask
 
 
+def _class_f1(truth: np.ndarray, prediction: np.ndarray, positive: bool = True) -> float:
+    """Binary F1 for one class with the explicit zero convention."""
+    expected = truth if positive else ~truth
+    observed = prediction if positive else ~prediction
+    true_positive = int(np.logical_and(expected, observed).sum())
+    false_positive = int(np.logical_and(~expected, observed).sum())
+    false_negative = int(np.logical_and(expected, ~observed).sum())
+    denominator = 2 * true_positive + false_positive + false_negative
+    return 0.0 if denominator == 0 else 2 * true_positive / denominator
+
+
 @dataclass(frozen=True)
 class DEComparison:
     """Evaluate one DE-recovery family on a truth-derived gene panel.
@@ -75,20 +87,17 @@ class DEComparison:
     def __call__(self, truth: PerturbationDEResult, prediction: PerturbationDEResult, ctx) -> MetricOutcome:
         """Return one signed/recovery score or a structured undefined result."""
         try:
-            selected_idx = self.panel.select(ctx, ctx.current_pert)
+            universe_idx, selected_idx = self.panel.de_universe(ctx, ctx.current_pert)
+            if selected_idx is not None:
+                truth_positive = np.isin(universe_idx, selected_idx)
+            else:
+                truth_positive = np.asarray(truth.pvalue_adj[universe_idx] < self.padj_max)
         except UndefinedPanel as error:
             return _undefined(error.reason)
 
         # A DEG panel defines the observed positive/relevant genes, not the whole classification
         # universe.  In particular, AUROC/AUPRC need the non-DE genes as negatives.  Dataset-wide
         # panels (all/HVG/HEG) already define that universe directly.
-        if self.panel.feature_set == "deg":
-            universe_idx = np.arange(len(ctx.ds.var_names), dtype=int)
-            truth_positive = np.isin(universe_idx, selected_idx)
-        else:
-            universe_idx = selected_idx
-            truth_positive = np.asarray(truth.pvalue_adj[universe_idx] < self.padj_max)
-
         t_stat = np.asarray(truth.statistic[universe_idx], dtype=float)
         p_stat = np.asarray(prediction.statistic[universe_idx], dtype=float)
         t_padj = np.asarray(truth.pvalue_adj[universe_idx], dtype=float)
@@ -120,7 +129,8 @@ class DEComparison:
                 return _undefined("constant_ground_truth_de_statistic")
             if np.ptp(p_stat[use]) == 0:
                 return MetricOutcome(0.0)
-            return MetricOutcome(float(spearmanr(t_stat[use], p_stat[use]).statistic))
+            result: Any = spearmanr(t_stat[use], p_stat[use])
+            return MetricOutcome(float(result.statistic))
         if self.family == "direction-concordance":
             use = truth_positive
             if not use.any():
@@ -153,13 +163,18 @@ class DEComparison:
         if self.family == "class-precision":
             if not truth_positive.any():
                 return _undefined("no_ground_truth_positive_degs")
-            return MetricOutcome(float(precision_score(truth_positive, prediction_positive, zero_division=0)))
+            predicted = int(prediction_positive.sum())
+            true_positive = int(np.logical_and(truth_positive, prediction_positive).sum())
+            return MetricOutcome(0.0 if predicted == 0 else true_positive / predicted)
         if self.family == "f1":
             if not truth_positive.any():
                 return _undefined("no_ground_truth_positive_degs")
-            return MetricOutcome(float(f1_score(truth_positive, prediction_positive, zero_division=0)))
+            return MetricOutcome(_class_f1(truth_positive, prediction_positive))
         if self.family == "macro-f1":
             if not truth_positive.any():
                 return _undefined("no_ground_truth_positive_degs")
-            return MetricOutcome(float(f1_score(truth_positive, prediction_positive, average="macro", zero_division=0)))
+            return MetricOutcome(
+                (_class_f1(truth_positive, prediction_positive) + _class_f1(truth_positive, prediction_positive, False))
+                / 2
+            )
         raise AssertionError(f"unhandled DE metric {self.family}")

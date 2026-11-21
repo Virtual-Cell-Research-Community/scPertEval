@@ -71,17 +71,38 @@ class GenePanel:
         """Canonical, fully resolved panel name used in protocol identities and caches."""
         parts = [self.feature_set]
         if self.feature_set == "deg":
-            parts += [f"padj-{self.padj_max:g}" if self.padj_max is not None else "padj-none", f"rank-{self.rank_by}"]
+            padj = repr(float(self.padj_max)) if self.padj_max is not None else "none"
+            parts += [f"padj-{padj}", f"rank-{self.rank_by}"]
         if self.top_k is not None:
             parts.append(f"top-{self.top_k}")
         if self.target_policy != "no_special":
             parts.append(self.target_policy.replace("_", "-"))
         if self.feature_set == "deg":
-            parts.append(f"ref-{self.reference.replace('_', '-')}")
+            parts.append(f"ref-{self.reference}")
         return "panel__" + "__".join(parts)
 
     def select(self, ctx, pert: str | None) -> np.ndarray:
         """Return integer positions into the full dataset gene axis."""
+        selected = self._apply_target_policy(ctx, pert, self._base_select(ctx, pert))
+        if selected.size == 0:
+            raise UndefinedPanel("empty_truth_derived_gene_panel")
+        return selected
+
+    def de_universe(self, ctx, pert: str) -> tuple[np.ndarray, np.ndarray | None]:
+        """Return the DE evaluation universe and explicit positives for a DEG panel.
+
+        ``positives`` is ``None`` for dataset-wide panels, where the DE metric derives labels from
+        adjusted p-values.  Keeping the universe separate from the positive set ensures target
+        inclusion/exclusion never changes biological DE class labels.
+        """
+        selected = self._base_select(ctx, pert)
+        if self.feature_set != "deg":
+            return self._apply_target_policy(ctx, pert, selected), None
+        universe = self._apply_target_policy(ctx, pert, np.arange(len(ctx.ds.var_names), dtype=int))
+        return universe, np.intersect1d(selected, universe)
+
+    def _base_select(self, ctx, pert: str | None) -> np.ndarray:
+        """Return the truth-derived base panel before applying target-gene policy."""
         n_genes = len(ctx.ds.var_names)
         if self.feature_set == "all":
             selected = np.arange(n_genes)
@@ -105,20 +126,21 @@ class GenePanel:
             if self.top_k is not None:
                 selected = selected[: self.top_k]
 
-        if self.target_policy != "no_special":
-            if pert is None:
-                raise ValueError("target-gene policy requires a perturbation")
-            targets = _target_indices(ctx, pert)
-            if targets.size == 0:
-                raise UndefinedPanel("target_gene_not_measured")
-            if self.target_policy == "force_include_target":
-                selected = np.union1d(selected, targets)
-            else:
-                selected = np.setdiff1d(selected, targets)
+        return np.asarray(selected, dtype=int)
+
+    def _apply_target_policy(self, ctx, pert: str | None, selected: np.ndarray) -> np.ndarray:
+        """Apply target inclusion/exclusion to an evaluation universe without changing class labels."""
         selected = np.asarray(selected, dtype=int)
-        if selected.size == 0:
-            raise UndefinedPanel("empty_truth_derived_gene_panel")
-        return selected
+        if self.target_policy == "no_special":
+            return selected
+        if pert is None:
+            raise ValueError("target-gene policy requires a perturbation")
+        targets = _target_indices(ctx, pert)
+        if targets.size == 0:
+            raise UndefinedPanel("target_gene_not_measured")
+        if self.target_policy == "force_include_target":
+            return np.union1d(selected, targets)
+        return np.setdiff1d(selected, targets)
 
 
 def _target_indices(ctx, pert: str) -> np.ndarray:

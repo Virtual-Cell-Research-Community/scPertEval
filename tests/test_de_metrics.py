@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import numpy as np
+import pandas as pd
 import pytest
 
 from scperteval.blocks.panels import GenePanel
@@ -81,4 +82,43 @@ def test_deg_panel_direction_uses_only_truth_selected_genes():
     panel = GenePanel("deg", top_k=2, padj_max=0.05, rank_by="significance")
     outcome = DEComparison("direction-concordance", panel)(truth, prediction, _DEGContext(truth))
     assert outcome.undefined_reason is None
+    assert outcome.value == pytest.approx(1.0)
+
+
+class _TargetContext(_DEGContext):
+    current_pert = "geneA"
+    ds = type(
+        "Dataset",
+        (),
+        {
+            "var_names": np.array(["geneA", "g1", "g2", "g3"]),
+            "adata": type("AnnData", (), {"obs": pd.DataFrame(index=[0])})(),
+        },
+    )()
+
+
+def test_force_include_target_does_not_turn_target_into_de_positive():
+    truth = _de([8, 4, 0.2, -0.1], [0.8, 0.001, 0.8, 0.9])
+    prediction = _de([-8, 4, 0.2, -0.1], [0.001, 0.001, 0.8, 0.9])
+    panel = GenePanel(
+        "deg",
+        top_k=1,
+        padj_max=0.05,
+        rank_by="significance",
+        target_policy="force_include_target",
+    )
+    outcome = DEComparison("direction-concordance", panel)(truth, prediction, _TargetContext(truth))
+    assert outcome.value == pytest.approx(1.0)
+
+
+def test_exclude_target_removes_it_from_de_classification_universe():
+    truth = _de([8, 4, 0.2, -0.1], [0.001, 0.01, 0.8, 0.9])
+    panel = GenePanel(
+        "deg",
+        top_k=2,
+        padj_max=0.05,
+        rank_by="significance",
+        target_policy="exclude_own_target",
+    )
+    outcome = DEComparison("auroc", panel)(truth, truth, _TargetContext(truth))
     assert outcome.value == pytest.approx(1.0)

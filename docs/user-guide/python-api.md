@@ -31,10 +31,11 @@ prep = sp.prepare("data/wessels23.h5ad", ["pearson_ctrl", "mse", "de_auprc"])
 
 `dataset` accepts either a path to a `.h5ad` **or** an in-memory
 {class}`~anndata.AnnData`, so there's no need to write a temporary file in a notebook. The
-second argument is the same protocol-spec language as the CLI's `-p`: `"all"`, a group
+second argument accepts the same protocol-spec language as the CLI's `-p`: `"all"`, a group
 (`"pseudobulk"` / `"distributional"` / `"de"`), a name, or a tunable protocol as
-`name=value` — either a list or a comma-separated string. Pass `[]` if you only need
-{func}`~scperteval.api.de`. Prepare-time knobs (`subsample`, `seed`, `min_cells`,
+`name=value` — either a sequence or a comma-separated string. Python callers may additionally
+pass fully concrete {class}`~scperteval.types.Protocol` objects, as described below. Pass `[]` if
+you only need {func}`~scperteval.api.de`. Prepare-time knobs (`subsample`, `seed`, `min_cells`,
 `perturbation_key`, `control_label`, `workers`, `name`) are fixed on the handle.
 
 One handle is **reusable and thread-safe**: run as many `calibrate` / `score` / `de` calls
@@ -45,6 +46,42 @@ concurrently.
 a = sp.calibrate(prep, "pearson_ctrl")  # reuses the shared dataset + caches
 b = sp.calibrate(prep, "mse")
 c = sp.de(prep, "t-test")
+```
+
+### Concrete protocols for analysis code
+
+The Python interface accepts concrete {class}`~scperteval.types.Protocol` objects in addition to
+curated names. This lets an analysis repository compose and freeze protocols from scPertEval
+building blocks without adding every combination to the command-line catalog:
+
+```python
+from scperteval.blocks import GenePanel, panel_space
+from scperteval.protocols import metrics
+from scperteval.types import Protocol
+
+panel = GenePanel("deg", top_k=50, padj_max=0.05, rank_by="significance")
+protocol = Protocol(
+    "my_pearson_top50_degs",
+    metrics.pearson,
+    representation="centroid",
+    space=panel_space(panel),
+)
+
+prep = sp.prepare(adata, [protocol])
+result = sp.score(prep, protocol, predictions)
+```
+
+Concrete protocols must be fully resolved and uniquely named. A custom protocol cannot reuse a
+curated name with different semantics. Concrete objects are deliberately Python-only; the CLI
+continues to accept curated registered names.
+
+Use {func}`~scperteval.api.truth_availability` to audit whether truth-derived panels and metrics are
+defined before loading predictions. It supports perturbation- and dataset-scope protocols and
+returns one row per protocol and perturbation:
+
+```python
+availability = sp.truth_availability(prep, [protocol])
+availability[["protocol", "perturbation", "ground_truth_defined", "undefined_reason"]]
 ```
 
 ## Calibrate
@@ -60,9 +97,9 @@ res.aggregate  # {"mean": …, "median": …} — the DRF summary for this proto
 res.per_perturbation  # DataFrame: raw control values + the calibrated DRF, one row per perturbation
 ```
 
-`calibrate` takes a **single** protocol spec — a name (`"pearson_ctrl"`) or a tunable one
-(`"mse_top_k=30"`); it does not accept `"all"` or a group. Pass `calibrator="bds"` for the Bound
-Discrimination Score instead of DRF.
+`calibrate` takes a **single** protocol — a curated name (`"pearson_ctrl"`), a tunable specification
+(`"mse_top_k=30"`), or a concrete `Protocol` object; it does not accept `"all"` or a group. Pass
+`calibrator="bds"` for the Bound Discrimination Score instead of DRF.
 
 ### Your own vectors as sources
 

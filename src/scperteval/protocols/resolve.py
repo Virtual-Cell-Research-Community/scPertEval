@@ -8,6 +8,7 @@ protocol with a value (``name=value``, e.g. ``mse_top_k=30``).
 from __future__ import annotations
 
 import warnings
+from collections.abc import Sequence
 from importlib.util import find_spec
 
 from ..types import Protocol
@@ -99,7 +100,7 @@ def resolve_protocols(specs: list[str]) -> list[Protocol]:
     return list(by_name.values())
 
 
-def resolve_protocol_inputs(specs: list[str | Protocol]) -> list[Protocol]:
+def resolve_protocol_inputs(specs: Sequence[str | Protocol]) -> list[Protocol]:
     """Resolve registered names and concrete protocol objects through one interface.
 
     Concrete objects are intentionally supported only by the Python interface.  They let an
@@ -115,6 +116,12 @@ def resolve_protocol_inputs(specs: list[str | Protocol]) -> list[Protocol]:
                     "before passing it to prepare()/score()/calibrate()"
                 )
             _check_available(spec)
+            registered = PROTOCOLS.get(spec.name)
+            if registered is not None and spec != _concrete(registered):
+                raise ValueError(
+                    f"concrete protocol {spec.name!r} conflicts with a curated protocol of the same name; "
+                    "use a distinct name so result provenance remains unambiguous"
+                )
             out.append(spec)
         elif isinstance(spec, str):
             out.extend(resolve_protocols([spec]))

@@ -17,6 +17,7 @@ The public functions for using scPertEval from Python, re-exported at the packag
     calibrate
     score
     de
+    truth_availability
 ```
 
 ## Result types
