@@ -225,7 +225,7 @@ def compute_de(ctx, *, target=None, reference="all_perturbed", perturbations=Non
     Returns ``(statistic, pvalue_adj)`` matrices (perturbations x genes) for the
     requested target-vs-reference comparison under the context's DE method.
 
-    ``target=None`` preserves the historical behavior by using ``ctx.cfg.truth``.
+    ``target=None`` uses the target source configured in ``ctx.cfg.truth``.
     """
     target = ctx.cfg.truth if target is None else target
     validate_de_target(target)

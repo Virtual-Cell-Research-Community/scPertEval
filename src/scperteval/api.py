@@ -467,11 +467,11 @@ def de(
         The DE backend (default ``"t-test"``). Different methods reuse the same prepared dataset,
         cached separately — no reload.
     target : {"gt_half", "gt_all_cells"}, optional
-        Target cells for each perturbation: its deterministic first half (the historical default)
-        or all observed cells.
+        Target cells for each perturbation: its deterministic first half (the default) or all
+        observed cells.
     reference : {"all_perturbed", "control"}, optional
         Comparison population: the capped all-perturbed sample with the current perturbation
-        removed (the historical default), or the capped non-targeting controls.
+        removed (the default), or the capped non-targeting controls.
     perturbations : sequence of str, optional
         Ordered subset to compute. By default, compute every eligible perturbation.
     out_dir : str or pathlib.Path, optional

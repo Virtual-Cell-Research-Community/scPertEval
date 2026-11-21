@@ -128,7 +128,7 @@ scperteval de data/wessels23.h5ad --method MWU
 scperteval de data/wessels23.h5ad --method MWU --target gt_all_cells --reference control
 ```
 
-The target can be the historical deterministic split half (`gt_half`) or all observed cells
+The target can be the deterministic split half (`gt_half`) or all observed cells
 (`gt_all_cells`). The reference can be the leave-one-perturbation-out all-perturbed sample
 (`all_perturbed`) or non-targeting controls (`control`). Both reference populations are capped by
 `--subsample` (default 8,192) and sampled deterministically using `--seed` (default 42). The HDF5
