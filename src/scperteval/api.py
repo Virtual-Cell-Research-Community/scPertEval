@@ -499,7 +499,15 @@ def truth_availability(
 
     This read-only diagnostic never loads model predictions.  Each protocol is evaluated with
     the observed ground truth supplied on both sides, so a non-finite score or structured reason
-    identifies a protocol/data eligibility problem rather than model behaviour.
+    identifies a protocol/data eligibility problem rather than model behaviour.  The result has
+    one row per protocol and perturbation: ``ground_truth_defined`` marks whether the self-score is
+    finite, ``undefined_reason`` explains an undefined value, and ``self_score`` is diagnostic only
+    (for example, Pearson is 1 and MSE is 0 when defined).
+
+    Reasons here come from truth-derived panels or raw metrics, for example
+    ``no_ground_truth_positive_degs``.  Calibration-only reasons such as
+    ``negative_beyond_protocol_perfect`` are instead reported by :func:`calibrate` and cannot
+    occur in this diagnostic.
     """
     _require_prepared(prepared, "truth_availability")
     _check_de_method(de_method)

@@ -76,13 +76,43 @@ curated name with different semantics. Concrete objects are deliberately Python-
 continues to accept curated registered names.
 
 Use {func}`~scperteval.api.truth_availability` to audit whether truth-derived panels and metrics are
-defined before loading predictions. It supports perturbation- and dataset-scope protocols and
-returns one row per protocol and perturbation:
+mathematically defined before loading predictions. It supports perturbation- and dataset-scope
+protocols and returns one row per protocol and perturbation:
 
 ```python
 availability = sp.truth_availability(prep, [protocol])
 availability[["protocol", "perturbation", "ground_truth_defined", "undefined_reason"]]
 ```
+
+For this diagnostic only, scPertEval supplies the observed ground truth on both sides of the
+metric. The `self_score` is therefore a diagnostic value (for example, Pearson correlation is 1
+and MSE is 0 when defined), **not** a model score. A typical result looks like:
+
+| protocol | perturbation | ground_truth_defined | undefined_reason | self_score |
+| --- | --- | --- | --- | --- |
+| `pearson_all` | `TP53` | `True` |  | `1.0` |
+| `de_auprc` | `GENE_X` | `False` | `no_ground_truth_positive_degs` | `NaN` |
+
+The audit is useful when two protocols must be compared on the same evaluation units: take the
+intersection of rows where both protocols have `ground_truth_defined=True`, and record the size of
+that common set. It does not diagnose model-specific failures because it deliberately does not read
+predictions.
+
+### Undefined scores and reason codes
+
+Metrics and calibrators return `NaN` together with a machine-readable `undefined_reason` when a
+score has no defensible numerical value. Reasons describe the stage at which evaluation became
+undefined:
+
+| Example reason | Stage | Meaning |
+| --- | --- | --- |
+| `no_ground_truth_positive_degs` | truth availability or scoring | A DEG-recovery metric such as AUPRC has no observed positive DEG to recover; assigning zero would incorrectly describe model failure. |
+| `constant_ground_truth_de_statistic` | truth availability or scoring | A correlation of DE statistics is not identifiable because the observed statistic has no variation. A custom metric may use the more general reason `constant_ground_truth` for the analogous case. |
+| `negative_beyond_protocol_perfect` | DRF calibration only | The negative control scored beyond the protocol's declared perfect value, so the DRF normalization is not valid. This reason cannot be produced by `truth_availability()`, which does not run a calibrator. |
+
+Structured reasons are also written to per-perturbation scoring and calibration output. An invalid
+or non-finite model prediction remains a model/protocol failure; it is not converted into a
+ground-truth eligibility exclusion.
 
 ## Calibrate
 
