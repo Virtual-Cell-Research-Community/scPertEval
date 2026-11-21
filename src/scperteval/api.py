@@ -25,10 +25,10 @@ from .blocks.de import DE_METHODS
 from .context import CacheStore, Context
 from .dataset import Dataset
 from .predictions import PredictionSet
-from .protocols.resolve import resolve_protocols
+from .protocols.resolve import resolve_protocol_inputs
 from .runner import compute_de, run_all
 from .sources import SOURCES
-from .types import Protocol, RunConfig
+from .types import MetricOutcome, Protocol, RunConfig
 
 if TYPE_CHECKING:  # annotation-only; keeps ``import scperteval`` from eagerly importing anndata
     from collections.abc import Callable
@@ -43,6 +43,7 @@ __all__ = [
     "de",
     "prepare",
     "score",
+    "truth_availability",
 ]
 
 #: The calibration outputs selectable from :func:`calibrate` (closed set).
@@ -159,11 +160,9 @@ def _require_prepared(prepared, verb: str) -> None:
         )
 
 
-def _single_protocol(protocol: str):
+def _single_protocol(protocol: str | Protocol):
     """Resolve one protocol spec to exactly one concrete protocol (error otherwise)."""
-    if not isinstance(protocol, str):
-        raise TypeError(f"protocol must be a single protocol name (str), not {type(protocol).__name__}")
-    protos = resolve_protocols([protocol])
+    protos = resolve_protocol_inputs([protocol])
     if len(protos) != 1:
         raise ValueError(
             f"the API evaluates one protocol per call; {protocol!r} resolves to {len(protos)} "
@@ -266,7 +265,7 @@ def _apply_center_on(proto: Protocol, center_on: str, ctx: Context) -> Protocol:
 
 def prepare(
     dataset: str | Path | AnnData,
-    protocols: str | list[str],
+    protocols: str | Protocol | list[str | Protocol],
     *,
     subsample: int = 8192,
     seed: int = 42,
@@ -313,8 +312,8 @@ def prepare(
     Prepared
         An opaque, reusable handle.
     """
-    specs = [protocols] if isinstance(protocols, str) else list(protocols)
-    protos = resolve_protocols(specs) if specs else []
+    specs = [protocols] if isinstance(protocols, (str, Protocol)) else list(protocols)
+    protos = resolve_protocol_inputs(specs) if specs else []
     cfg = RunConfig(
         dataset=_display_name(dataset, name),
         protocols=[p.name for p in protos],
@@ -334,7 +333,7 @@ def prepare(
 
 def calibrate(
     prepared: Prepared,
-    protocol: str,
+    protocol: str | Protocol,
     *,
     de_method: DEMethodName = "t-test",
     calibrator: CalibratorName = "drf",
@@ -397,7 +396,7 @@ def calibrate(
 
 def score(
     prepared: Prepared,
-    protocol: str,
+    protocol: str | Protocol,
     predictions: str | Path | AnnData,
     *,
     de_method: DEMethodName = "t-test",
@@ -484,3 +483,49 @@ def de(
     if out_dir is not None:
         io.write_de(ctx.cfg, ctx.ds.var_names, ctx.perturbations, {method: (statistic, pvalue_adj)}, _stamp())
     return result
+
+
+def truth_availability(
+    prepared: Prepared,
+    protocols: str | Protocol | list[str | Protocol],
+    *,
+    de_method: DEMethodName = "t-test",
+) -> pd.DataFrame:
+    """Truth-self-evaluate concrete protocols and report ground-truth-definedness.
+
+    This read-only diagnostic never loads model predictions.  Each protocol is evaluated with
+    the observed ground truth supplied on both sides, so a non-finite score or structured reason
+    identifies a protocol/data eligibility problem rather than model behaviour.
+    """
+    from .blocks.panels import UndefinedPanel
+    from .runner import _metric_outcome
+
+    _require_prepared(prepared, "truth_availability")
+    _check_de_method(de_method)
+    specs = [protocols] if isinstance(protocols, (str, Protocol)) else list(protocols)
+    resolved = resolve_protocol_inputs(specs)
+    ctx = prepared._run_context(
+        protocols=[protocol.name for protocol in resolved],
+        de_method=de_method,
+        truth="gt_all_cells",
+    )
+    ctx.warm(resolved)
+    rows = []
+    for protocol in resolved:
+        for pert in ctx.perturbations:
+            ctx.current_pert = pert
+            try:
+                truth = ctx.view(pert, ctx.cfg.truth, protocol)
+                outcome = _metric_outcome(protocol, truth, truth, ctx)
+            except UndefinedPanel as error:
+                outcome = MetricOutcome(float("nan"), error.reason)
+            rows.append(
+                {
+                    "protocol": protocol.name,
+                    "perturbation": pert,
+                    "ground_truth_defined": outcome.undefined_reason is None and np.isfinite(outcome.value),
+                    "undefined_reason": outcome.undefined_reason,
+                    "self_score": outcome.value,
+                }
+            )
+    return pd.DataFrame(rows)

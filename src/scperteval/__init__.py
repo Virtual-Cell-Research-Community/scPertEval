@@ -23,6 +23,7 @@ if TYPE_CHECKING:  # let type checkers and IDEs see the lazily re-exported names
         de,
         prepare,
         score,
+        truth_availability,
     )
 
     __version__: str
@@ -37,6 +38,7 @@ __all__ = [
     "de",
     "prepare",
     "score",
+    "truth_availability",
 ]
 
 

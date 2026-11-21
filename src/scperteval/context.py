@@ -183,16 +183,14 @@ class Context:
         return np.asarray(self.source(name)(self, pert), dtype=np.float64).ravel()
 
     def _de_view(self, pert, source, p):
-        """Return the DE view: the truth's PerturbationDEResult, or a candidate's ``|statistic|`` ranking.
+        """Return symmetric signed DE results for truth and candidate.
 
         The negative candidate is tested against ``neg_reference`` (e.g. control) rather than
         ``reference`` (the all-perturbed sample), the hybrid DE setup.
         """
-        if source == self.cfg.truth:
-            return self.de(pert, self.cfg.truth, p.reference)
         is_negative = source == self.candidates.get("negative")
         reference = p.neg_reference if (is_negative and p.neg_reference) else p.reference
-        return np.abs(self.de(pert, source, reference).statistic)
+        return self.de(pert, source, reference)
 
     def de(self, pert, source, reference="all_perturbed"):
         """Differential expression for one (source vs reference) comparison, cached.

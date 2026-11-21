@@ -10,7 +10,8 @@ from time import perf_counter
 import numpy as np
 from threadpoolctl import threadpool_limits
 
-from .types import Calibrator, Protocol
+from .blocks.panels import UndefinedPanel
+from .types import Calibrator, MetricOutcome, Protocol
 
 #: Generic (positive, negative) control defaults keyed on ``representation`` — the base tier of
 #: control resolution, used unless a protocol declares a default or a run overrides one.
@@ -146,13 +147,18 @@ def _finalize(p, calibrator, perts, raws_list, needed):
     Each row records both the resolved control *source* names (``needed``, one column per calibrator
     input) and their raw metric *values* (``raw_{name}``), alongside the calibrated score.
     """
-    per_pert = [calibrator.per_pert(raws, p) for raws in raws_list]
+    numeric = [{name: outcome.value for name, outcome in raws.items()} for raws in raws_list]
+    per_pert = [calibrator.per_pert(raws, p) for raws in numeric]
     rows = [
         {
             "protocol": p.name,
             "perturbation": pert,
             **needed,
-            **{f"raw_{name}": raws[name] for name in raws},
+            **{f"raw_{name}": outcome.value for name, outcome in raws.items()},
+            **{f"raw_{name}_undefined_reason": outcome.undefined_reason or np.nan for name, outcome in raws.items()},
+            "undefined_reason": next(
+                (outcome.undefined_reason for outcome in raws.values() if outcome.undefined_reason is not None), np.nan
+            ),
             calibrator.name: value,
         }
         for pert, raws, value in zip(perts, raws_list, per_pert)
@@ -165,8 +171,11 @@ def _run_per_perturbation(p: Protocol, ctx, calibrator: Calibrator, needed: dict
 
     def work(pert):
         ctx.current_pert = pert
-        gt = ctx.view(pert, ctx.cfg.truth, p)
-        return {name: p.metric(gt, ctx.view(pert, src, p), ctx) for name, src in needed.items()}
+        try:
+            gt = ctx.view(pert, ctx.cfg.truth, p)
+            return {name: _metric_outcome(p, gt, ctx.view(pert, src, p), ctx) for name, src in needed.items()}
+        except UndefinedPanel as error:
+            return {name: MetricOutcome(float("nan"), error.reason) for name in needed}
 
     perts = ctx.perturbations
     start = perf_counter()
@@ -175,6 +184,15 @@ def _run_per_perturbation(p: Protocol, ctx, calibrator: Calibrator, needed: dict
     seconds = perf_counter() - start
     agg, rows = _finalize(p, calibrator, perts, raws_list, needed)
     return agg, rows, seconds
+
+
+def _metric_outcome(p: Protocol, gt, prediction, ctx) -> MetricOutcome:
+    """Normalize legacy float metrics and structured metrics to one internal result."""
+    result = p.metric(gt, prediction, ctx)
+    if isinstance(result, MetricOutcome):
+        return result
+    value = float(result)
+    return MetricOutcome(value, None if np.isfinite(value) else "metric_undefined")
 
 
 def _run_dataset(p: Protocol, ctx, calibrator: Calibrator, needed: dict):
@@ -198,7 +216,13 @@ def _run_dataset(p: Protocol, ctx, calibrator: Calibrator, needed: dict):
     scores = {name: p.metric(gt, collect(src), ctx) for name, src in needed.items()}
     seconds = perf_counter() - start
 
-    raws_list = [{name: float(scores[name][i]) for name in needed} for i in range(len(perts))]
+    raws_list = [
+        {
+            name: MetricOutcome(float(scores[name][i]), None if np.isfinite(scores[name][i]) else "metric_undefined")
+            for name in needed
+        }
+        for i in range(len(perts))
+    ]
     agg, rows = _finalize(p, calibrator, perts, raws_list, needed)
     return agg, rows, seconds
 

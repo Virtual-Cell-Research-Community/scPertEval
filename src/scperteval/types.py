@@ -63,6 +63,14 @@ class PerturbationDEResult:
 
 
 @dataclass(frozen=True)
+class MetricOutcome:
+    """A scalar metric value with an optional structured undefined reason."""
+
+    value: float
+    undefined_reason: str | None = None
+
+
+@dataclass(frozen=True)
 class Param:
     """A protocol's tunable knob: how a CLI value is cast, defaulted, and applied.
 
