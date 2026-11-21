@@ -125,3 +125,38 @@ def test_weighted_metrics_return_nan_when_no_gene_carries_weight():
     gt, pred = np.arange(6.0), np.arange(6.0) + 1
     assert np.isnan(M.weighted_pearson(gt, pred, ctx))
     assert np.isnan(M.weighted_r2(gt, pred, ctx))
+
+
+@pytest.mark.parametrize(
+    ("metric", "perfect"),
+    [
+        (M.mae, 0.0),
+        (M.spearman, 1.0),
+        (M.cosine, 1.0),
+        (M.squared_pearson, 1.0),
+        (M.explained_variance, 1.0),
+        (M.clipped_r2, 1.0),
+    ],
+)
+def test_scalar_metrics_attain_perfect_self_score(metric, perfect):
+    values = np.array([0.0, 2.0, -1.0, 4.0])
+    assert metric(values, values, None) == pytest.approx(perfect)
+
+
+def test_spearman_and_squared_pearson_constant_conventions():
+    varying = np.array([0.0, 1.0, 2.0])
+    constant = np.ones(3)
+    for metric in (M.spearman, M.squared_pearson):
+        assert metric(varying, constant, None) == 0.0
+        assert np.isnan(metric(constant, varying, None))
+
+
+def test_cosine_handles_constant_and_zero_vectors():
+    varying = np.array([0.0, 1.0, 2.0])
+    constant = np.ones(3)
+    zeros = np.zeros(3)
+    # Non-zero constant vectors have well-defined cosine similarity (1.0 with themselves)
+    assert M.cosine(constant, constant, None) == pytest.approx(1.0)
+    # Only the zero vector has undefined cosine similarity
+    assert np.isnan(M.cosine(zeros, varying, None))
+    assert M.cosine(varying, zeros, None) == 0.0

@@ -10,7 +10,7 @@ from time import perf_counter
 import numpy as np
 from threadpoolctl import threadpool_limits
 
-from .types import Calibrator, Protocol
+from .types import Calibrator, MetricOutcome, Protocol
 
 #: Generic (positive, negative) control defaults keyed on ``representation`` — the base tier of
 #: control resolution, used unless a protocol declares a default or a run overrides one.
@@ -140,50 +140,66 @@ def _warn_declared_overrides(cfg, protocols) -> None:
         warnings.warn("; ".join(parts), stacklevel=2)
 
 
-def _finalize(p, calibrator, perts, raws_list, needed):
-    """Per-perturbation rows + the aggregate, from each perturbation's raw control values.
+def _as_outcome(result) -> MetricOutcome:
+    """Normalize a raw metric return value (float or MetricOutcome) into one MetricOutcome."""
+    if isinstance(result, MetricOutcome):
+        return result
+    value = float(result)
+    return MetricOutcome(value, None if np.isfinite(value) else "metric_undefined")
 
-    Each row records both the resolved control *source* names (``needed``, one column per calibrator
-    input) and their raw metric *values* (``raw_{name}``), alongside the calibrated score.
+
+def _calibrated_outcome(
+    calibrator: Calibrator, raw_outcomes: dict[str, MetricOutcome], protocol: Protocol
+) -> MetricOutcome:
+    """Propagate raw metric undefinedness before applying the calibrator."""
+    for outcome in raw_outcomes.values():
+        if outcome.undefined_reason is not None or not np.isfinite(outcome.value):
+            return MetricOutcome(float("nan"), outcome.undefined_reason or "metric_undefined")
+    numeric = {name: outcome.value for name, outcome in raw_outcomes.items()}
+    result = calibrator.per_pert(numeric, protocol)
+    if isinstance(result, MetricOutcome):
+        return result
+    value = float(result)
+    return MetricOutcome(value, None if np.isfinite(value) else "calibrator_undefined")
+
+
+def _finalize(p, calibrator, perts, raws_list, needed):
+    """Per-perturbation rows + the aggregate, from each perturbation's raw control outcomes.
+
+    Each row records the resolved control *source* names (``needed``), their raw metric
+    *values* (``raw_{name}``), any ``undefined_reason``, and the calibrated score.
     """
-    per_pert = [calibrator.per_pert(raws, p) for raws in raws_list]
+    per_pert = [_calibrated_outcome(calibrator, raw_outcomes, p) for raw_outcomes in raws_list]
     rows = [
         {
             "protocol": p.name,
             "perturbation": pert,
             **needed,
-            **{f"raw_{name}": raws[name] for name in raws},
-            calibrator.name: value,
+            **{f"raw_{name}": outcome.value for name, outcome in raws.items()},
+            "undefined_reason": calibrated.undefined_reason or np.nan,
+            calibrator.name: calibrated.value,
         }
-        for pert, raws, value in zip(perts, raws_list, per_pert)
+        for pert, raws, calibrated in zip(perts, raws_list, per_pert)
     ]
-    return calibrator.aggregate(np.asarray(per_pert, dtype=float)), rows
+    return calibrator.aggregate(np.asarray([outcome.value for outcome in per_pert], dtype=float)), rows
 
 
-def _run_per_perturbation(p: Protocol, ctx, calibrator: Calibrator, needed: dict):
-    """Score one perturbation at a time (across a thread pool), gt vs each control."""
+def _evaluate_per_perturbation(p: Protocol, ctx, sources: dict[str, str]):
+    """Evaluate named sources independently per perturbation."""
 
     def work(pert):
         ctx.current_pert = pert
         gt = ctx.view(pert, ctx.cfg.truth, p)
-        return {name: p.metric(gt, ctx.view(pert, src, p), ctx) for name, src in needed.items()}
+        return {name: _as_outcome(p.metric(gt, ctx.view(pert, src, p), ctx)) for name, src in sources.items()}
 
     perts = ctx.perturbations
-    start = perf_counter()
     with ThreadPoolExecutor(max_workers=_n_workers(ctx.cfg)) as pool:
         raws_list = list(pool.map(work, perts))
-    seconds = perf_counter() - start
-    agg, rows = _finalize(p, calibrator, perts, raws_list, needed)
-    return agg, rows, seconds
+    return perts, raws_list
 
 
-def _run_dataset(p: Protocol, ctx, calibrator: Calibrator, needed: dict):
-    """Score dataset-scope protocols by handing the metric all perturbations at once.
-
-    Build every perturbation's gt and control datapoints, call the metric once on the full
-    lists, then read off each perturbation's score. Perturbations are treated as a single
-    group (these datasets are single-covariate); drf instead ranks within each covariate group.
-    """
+def _evaluate_dataset(p: Protocol, ctx, sources: dict[str, str]):
+    """Evaluate dataset-scope sources once and unpack one outcome per perturbation."""
     perts = ctx.perturbations
 
     def collect(source):
@@ -193,12 +209,33 @@ def _run_dataset(p: Protocol, ctx, calibrator: Calibrator, needed: dict):
             out.append(ctx.view(pert, source, p))
         return out
 
-    start = perf_counter()
     gt = collect(ctx.cfg.truth)
-    scores = {name: p.metric(gt, collect(src), ctx) for name, src in needed.items()}
-    seconds = perf_counter() - start
+    scores = {name: p.metric(gt, collect(src), ctx) for name, src in sources.items()}
+    raws_list = [{name: _as_outcome(scores[name][i]) for name in sources} for i in range(len(perts))]
+    return perts, raws_list
 
-    raws_list = [{name: float(scores[name][i]) for name in needed} for i in range(len(perts))]
+
+def evaluate_sources(p: Protocol, ctx, sources: dict[str, str]):
+    """Evaluate a protocol against named sources according to ``p.scope``."""
+    if p.scope == "dataset":
+        return _evaluate_dataset(p, ctx, sources)
+    return _evaluate_per_perturbation(p, ctx, sources)
+
+
+def _run_per_perturbation(p: Protocol, ctx, calibrator: Calibrator, needed: dict):
+    """Score one perturbation at a time (across a thread pool), gt vs each control."""
+    start = perf_counter()
+    perts, raws_list = evaluate_sources(p, ctx, needed)
+    seconds = perf_counter() - start
+    agg, rows = _finalize(p, calibrator, perts, raws_list, needed)
+    return agg, rows, seconds
+
+
+def _run_dataset(p: Protocol, ctx, calibrator: Calibrator, needed: dict):
+    """Score dataset-scope protocols by handing the metric all perturbations at once."""
+    start = perf_counter()
+    perts, raws_list = evaluate_sources(p, ctx, needed)
+    seconds = perf_counter() - start
     agg, rows = _finalize(p, calibrator, perts, raws_list, needed)
     return agg, rows, seconds
 

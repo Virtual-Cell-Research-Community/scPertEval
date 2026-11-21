@@ -31,9 +31,10 @@ prep = sp.prepare("data/wessels23.h5ad", ["pearson_ctrl", "mse", "de_auprc"])
 
 `dataset` accepts either a path to a `.h5ad` **or** an in-memory
 {class}`~anndata.AnnData`, so there's no need to write a temporary file in a notebook. The
-second argument is the same protocol-spec language as the CLI's `-p`: `"all"`, a group
+second argument accepts the same protocol-spec language as the CLI's `-p`: `"all"`, a group
 (`"pseudobulk"` / `"distributional"` / `"de"`), a name, or a tunable protocol as
-`name=value` — either a list or a comma-separated string. Pass `[]` if you only need
+`name=value` — either a sequence or a comma-separated string. Python callers may also pass
+concrete {class}`~scperteval.types.Protocol` objects directly. Pass `[]` if you only need
 {func}`~scperteval.api.de`. Prepare-time knobs (`subsample`, `seed`, `min_cells`,
 `perturbation_key`, `control_label`, `workers`, `name`) are fixed on the handle.
 
@@ -46,6 +47,26 @@ a = sp.calibrate(prep, "pearson_ctrl")  # reuses the shared dataset + caches
 b = sp.calibrate(prep, "mse")
 c = sp.de(prep, "t-test")
 ```
+
+### Concrete protocols & `truth_availability()`
+
+Python callers can pass concrete {class}`~scperteval.types.Protocol` objects to `prepare()`,
+`calibrate()`, `score()`, and `truth_availability()` without registering them in the curated CLI
+catalog:
+
+```python
+from scperteval.protocols import metrics
+from scperteval.types import Protocol
+
+proto = Protocol("my_mae", metrics.mae, representation="centroid", better="lower", perfect=0.0)
+prep = sp.prepare(adata, [proto])
+res = sp.score(prep, proto, predictions)
+```
+
+Concrete protocols must be fully resolved and cannot shadow a curated protocol name with different
+semantics. Use {func}`~scperteval.api.truth_availability` to audit which `(protocol, perturbation)`
+units are ground-truth-defined before loading predictions (default `truth="gt_all_cells"`; pass
+`truth="gt_half"` to match calibration cohorts).
 
 ## Calibrate
 
