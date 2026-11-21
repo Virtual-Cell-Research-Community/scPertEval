@@ -32,6 +32,25 @@ def _undefined(reason: str) -> MetricOutcome:
     return MetricOutcome(float("nan"), reason)
 
 
+def _ranking_scores(result: PerturbationDEResult, idx: np.ndarray, rank_by: str | None) -> np.ndarray:
+    """Return deterministic continuous scores whose descending order is the protocol ranking."""
+    statistic = np.asarray(result.statistic[idx], dtype=float)
+    if rank_by == "significance":
+        padj = np.asarray(result.pvalue_adj[idx], dtype=float)
+        order = np.lexsort((idx, -np.abs(statistic), padj))
+        scores = np.empty(len(idx), dtype=float)
+        scores[order] = np.arange(len(idx), 0, -1, dtype=float)
+        return scores
+    return np.abs(statistic)
+
+
+def _top_mask(scores: np.ndarray, k: int) -> np.ndarray:
+    """Select exactly the first ``k`` genes under a stable descending ranking."""
+    mask = np.zeros(len(scores), dtype=bool)
+    mask[np.argsort(-scores, kind="stable")[:k]] = True
+    return mask
+
+
 @dataclass(frozen=True)
 class DEComparison:
     """Evaluate one DE-recovery family on a truth-derived gene panel.
@@ -56,65 +75,91 @@ class DEComparison:
     def __call__(self, truth: PerturbationDEResult, prediction: PerturbationDEResult, ctx) -> MetricOutcome:
         """Return one signed/recovery score or a structured undefined result."""
         try:
-            idx = self.panel.select(ctx, ctx.current_pert)
+            selected_idx = self.panel.select(ctx, ctx.current_pert)
         except UndefinedPanel as error:
             return _undefined(error.reason)
-        t_stat = np.asarray(truth.statistic[idx], dtype=float)
-        p_stat = np.asarray(prediction.statistic[idx], dtype=float)
-        t_pos = np.asarray(truth.pvalue_adj[idx] < self.padj_max)
-        p_pos = np.asarray(prediction.pvalue_adj[idx] < self.padj_max)
-        if not (np.isfinite(t_stat).all() and np.isfinite(p_stat).all()):
-            return _undefined("non_finite_de_statistic")
+
+        # A DEG panel defines the observed positive/relevant genes, not the whole classification
+        # universe.  In particular, AUROC/AUPRC need the non-DE genes as negatives.  Dataset-wide
+        # panels (all/HVG/HEG) already define that universe directly.
+        if self.panel.feature_set == "deg":
+            universe_idx = np.arange(len(ctx.ds.var_names), dtype=int)
+            truth_positive = np.isin(universe_idx, selected_idx)
+        else:
+            universe_idx = selected_idx
+            truth_positive = np.asarray(truth.pvalue_adj[universe_idx] < self.padj_max)
+
+        t_stat = np.asarray(truth.statistic[universe_idx], dtype=float)
+        p_stat = np.asarray(prediction.statistic[universe_idx], dtype=float)
+        t_padj = np.asarray(truth.pvalue_adj[universe_idx], dtype=float)
+        p_padj = np.asarray(prediction.pvalue_adj[universe_idx], dtype=float)
+        if not (np.isfinite(t_stat).all() and np.isfinite(t_padj).all()):
+            return _undefined("non_finite_ground_truth_de_statistic")
+        if not (np.isfinite(p_stat).all() and np.isfinite(p_padj).all()):
+            return _undefined("non_finite_prediction_de_statistic")
+
+        rank_by = self.panel.rank_by if self.panel.feature_set == "deg" else None
+        truth_scores = _ranking_scores(truth, universe_idx, rank_by)
+        prediction_scores = _ranking_scores(prediction, universe_idx, rank_by)
+        if self.panel.feature_set == "deg" and self.panel.top_k is not None:
+            prediction_positive = _top_mask(prediction_scores, min(self.panel.top_k, len(universe_idx)))
+        else:
+            prediction_positive = p_padj < self.padj_max
 
         if self.family in {"average-precision", "deg-identification-auprc"}:
-            if not t_pos.any():
+            if not truth_positive.any():
                 return _undefined("no_ground_truth_positive_degs")
-            return MetricOutcome(float(average_precision_score(t_pos, np.abs(p_stat))))
+            return MetricOutcome(float(average_precision_score(truth_positive, prediction_scores)))
         if self.family == "auroc":
-            if t_pos.all() or not t_pos.any():
+            if truth_positive.all() or not truth_positive.any():
                 return _undefined("single_ground_truth_class")
-            return MetricOutcome(float(roc_auc_score(t_pos, np.abs(p_stat))))
+            return MetricOutcome(float(roc_auc_score(truth_positive, prediction_scores)))
         if self.family == "spearman":
-            if np.ptp(t_stat) == 0:
+            use = truth_positive if self.panel.feature_set == "deg" else np.ones(len(universe_idx), dtype=bool)
+            if np.ptp(t_stat[use]) == 0:
                 return _undefined("constant_ground_truth_de_statistic")
-            if np.ptp(p_stat) == 0:
+            if np.ptp(p_stat[use]) == 0:
                 return MetricOutcome(0.0)
-            return MetricOutcome(float(spearmanr(t_stat, p_stat).statistic))
+            return MetricOutcome(float(spearmanr(t_stat[use], p_stat[use]).statistic))
         if self.family == "direction-concordance":
-            use = t_pos
+            use = truth_positive
             if not use.any():
                 return _undefined("no_ground_truth_positive_degs")
             return MetricOutcome(float(np.mean(np.sign(t_stat[use]) == np.sign(p_stat[use]))))
         if self.family in {"topk-overlap", "set-overlap-at-n"}:
-            k = min(self.top_k or 50, len(idx))
+            k = min(self.top_k or self.panel.top_k or 50, len(universe_idx))
             if k == 0:
                 return _undefined("empty_truth_derived_gene_panel")
-            t_set = set(np.argsort(-np.abs(t_stat), kind="stable")[:k].tolist())
-            p_set = set(np.argsort(-np.abs(p_stat), kind="stable")[:k].tolist())
-            return MetricOutcome(len(t_set & p_set) / k)
+            truth_top = _top_mask(truth_scores, k)
+            prediction_top = _top_mask(prediction_scores, k)
+            return MetricOutcome(float(np.logical_and(truth_top, prediction_top).sum() / k))
         if self.family == "set-overlap-at-truth-size":
-            n = int(t_pos.sum())
+            n = int(truth_positive.sum())
             if n == 0:
                 return _undefined("no_ground_truth_positive_degs")
-            p_top = set(np.argsort(-np.abs(p_stat), kind="stable")[:n].tolist())
-            return MetricOutcome(len(set(np.flatnonzero(t_pos)) & p_top) / n)
+            prediction_top = _top_mask(prediction_scores, n)
+            return MetricOutcome(float(np.logical_and(truth_positive, prediction_top).sum() / n))
         if self.family == "deg-set-intersection":
-            if not t_pos.any():
+            if not truth_positive.any():
                 return _undefined("no_ground_truth_positive_degs")
-            return MetricOutcome(float(np.logical_and(t_pos, p_pos).sum() / t_pos.sum()))
+            return MetricOutcome(
+                float(np.logical_and(truth_positive, prediction_positive).sum() / truth_positive.sum())
+            )
         if self.family == "jaccard":
-            union = np.logical_or(t_pos, p_pos).sum()
-            return MetricOutcome(1.0 if union == 0 else float(np.logical_and(t_pos, p_pos).sum() / union))
+            union = np.logical_or(truth_positive, prediction_positive).sum()
+            return MetricOutcome(
+                1.0 if union == 0 else float(np.logical_and(truth_positive, prediction_positive).sum() / union)
+            )
         if self.family == "class-precision":
-            if not t_pos.any():
+            if not truth_positive.any():
                 return _undefined("no_ground_truth_positive_degs")
-            return MetricOutcome(float(precision_score(t_pos, p_pos, zero_division=0)))
+            return MetricOutcome(float(precision_score(truth_positive, prediction_positive, zero_division=0)))
         if self.family == "f1":
-            if not t_pos.any():
+            if not truth_positive.any():
                 return _undefined("no_ground_truth_positive_degs")
-            return MetricOutcome(float(f1_score(t_pos, p_pos, zero_division=0)))
+            return MetricOutcome(float(f1_score(truth_positive, prediction_positive, zero_division=0)))
         if self.family == "macro-f1":
-            if not t_pos.any():
+            if not truth_positive.any():
                 return _undefined("no_ground_truth_positive_degs")
-            return MetricOutcome(float(f1_score(t_pos, p_pos, average="macro", zero_division=0)))
+            return MetricOutcome(float(f1_score(truth_positive, prediction_positive, average="macro", zero_division=0)))
         raise AssertionError(f"unhandled DE metric {self.family}")
