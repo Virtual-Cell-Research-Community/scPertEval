@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+### Added
+
+- Concrete `Protocol` objects in the Python API, allowing analysis repositories to compose
+  truth-derived gene panels, target-gene policies, subset-then-PCA spaces, and signed DE-recovery
+  metrics without extending the curated CLI catalog.
+- `truth_availability()` for auditing ground-truth-defined evaluation units before loading model
+  predictions.
+- Structured undefined reasons in per-perturbation result tables.
+
+### Changed
+
+- DE views now preserve signed statistics and adjusted p-values for both truth and predictions.
+- Undefined raw metric values propagate through DRF and BDS rather than being counted as losses.
+
 ## 0.2.0
 
 ### Added

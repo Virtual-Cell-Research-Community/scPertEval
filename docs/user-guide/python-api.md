@@ -31,10 +31,11 @@ prep = sp.prepare("data/wessels23.h5ad", ["pearson_ctrl", "mse", "de_auprc"])
 
 `dataset` accepts either a path to a `.h5ad` **or** an in-memory
 {class}`~anndata.AnnData`, so there's no need to write a temporary file in a notebook. The
-second argument is the same protocol-spec language as the CLI's `-p`: `"all"`, a group
+second argument accepts the same protocol-spec language as the CLI's `-p`: `"all"`, a group
 (`"pseudobulk"` / `"distributional"` / `"de"`), a name, or a tunable protocol as
-`name=value` — either a list or a comma-separated string. Pass `[]` if you only need
-{func}`~scperteval.api.de`. Prepare-time knobs (`subsample`, `seed`, `min_cells`,
+`name=value` — either a sequence or a comma-separated string. Python callers may additionally
+pass fully concrete {class}`~scperteval.types.Protocol` objects, as described below. Pass `[]` if
+you only need {func}`~scperteval.api.de`. Prepare-time knobs (`subsample`, `seed`, `min_cells`,
 `perturbation_key`, `control_label`, `workers`, `name`) are fixed on the handle.
 
 One handle is **reusable and thread-safe**: run as many `calibrate` / `score` / `de` calls
@@ -46,6 +47,72 @@ a = sp.calibrate(prep, "pearson_ctrl")  # reuses the shared dataset + caches
 b = sp.calibrate(prep, "mse")
 c = sp.de(prep, "t-test")
 ```
+
+### Concrete protocols for analysis code
+
+The Python interface accepts concrete {class}`~scperteval.types.Protocol` objects in addition to
+curated names. This lets an analysis repository compose and freeze protocols from scPertEval
+building blocks without adding every combination to the command-line catalog:
+
+```python
+from scperteval.blocks import GenePanel, panel_space
+from scperteval.protocols import metrics
+from scperteval.types import Protocol
+
+panel = GenePanel("deg", top_k=50, padj_max=0.05, rank_by="significance")
+protocol = Protocol(
+    "my_pearson_top50_degs",
+    metrics.pearson,
+    representation="centroid",
+    space=panel_space(panel),
+)
+
+prep = sp.prepare(adata, [protocol])
+result = sp.score(prep, protocol, predictions)
+```
+
+Concrete protocols must be fully resolved and uniquely named. A custom protocol cannot reuse a
+curated name with different semantics. Concrete objects are deliberately Python-only; the CLI
+continues to accept curated registered names.
+
+Use {func}`~scperteval.api.truth_availability` to audit whether truth-derived panels and metrics are
+mathematically defined before loading predictions. It supports perturbation- and dataset-scope
+protocols and returns one row per protocol and perturbation:
+
+```python
+availability = sp.truth_availability(prep, [protocol])
+availability[["protocol", "perturbation", "ground_truth_defined", "undefined_reason"]]
+```
+
+For this diagnostic only, scPertEval supplies the observed ground truth on both sides of the
+metric. The `self_score` is therefore a diagnostic value (for example, Pearson correlation is 1
+and MSE is 0 when defined), **not** a model score. A typical result looks like:
+
+| protocol | perturbation | ground_truth_defined | undefined_reason | self_score |
+| --- | --- | --- | --- | --- |
+| `pearson_all` | `TP53` | `True` |  | `1.0` |
+| `de_auprc` | `GENE_X` | `False` | `no_ground_truth_positive_degs` | `NaN` |
+
+The audit is useful when two protocols must be compared on the same evaluation units: take the
+intersection of rows where both protocols have `ground_truth_defined=True`, and record the size of
+that common set. It does not diagnose model-specific failures because it deliberately does not read
+predictions.
+
+### Undefined scores and reason codes
+
+Metrics and calibrators return `NaN` together with a machine-readable `undefined_reason` when a
+score has no defensible numerical value. Reasons describe the stage at which evaluation became
+undefined:
+
+| Example reason | Stage | Meaning |
+| --- | --- | --- |
+| `no_ground_truth_positive_degs` | truth availability or scoring | A DEG-recovery metric such as AUPRC has no observed positive DEG to recover; assigning zero would incorrectly describe model failure. |
+| `constant_ground_truth_de_statistic` | truth availability or scoring | A correlation of DE statistics is not identifiable because the observed statistic has no variation. A custom metric may use the more general reason `constant_ground_truth` for the analogous case. |
+| `negative_beyond_protocol_perfect` | DRF calibration only | The negative control scored beyond the protocol's declared perfect value, so the DRF normalization is not valid. This reason cannot be produced by `truth_availability()`, which does not run a calibrator. |
+
+Structured reasons are also written to per-perturbation scoring and calibration output. An invalid
+or non-finite model prediction remains a model/protocol failure; it is not converted into a
+ground-truth eligibility exclusion.
 
 ## Calibrate
 
@@ -60,9 +127,9 @@ res.aggregate  # {"mean": …, "median": …} — the DRF summary for this proto
 res.per_perturbation  # DataFrame: raw control values + the calibrated DRF, one row per perturbation
 ```
 
-`calibrate` takes a **single** protocol spec — a name (`"pearson_ctrl"`) or a tunable one
-(`"mse_top_k=30"`); it does not accept `"all"` or a group. Pass `calibrator="bds"` for the Bound
-Discrimination Score instead of DRF.
+`calibrate` takes a **single** protocol — a curated name (`"pearson_ctrl"`), a tunable specification
+(`"mse_top_k=30"`), or a concrete `Protocol` object; it does not accept `"all"` or a group. Pass
+`calibrator="bds"` for the Bound Discrimination Score instead of DRF.
 
 ### Your own vectors as sources
 

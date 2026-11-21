@@ -22,8 +22,11 @@ Two protocol fields control what the metric receives:
 
 from __future__ import annotations
 
+from typing import Any
+
 import numpy as np
-from sklearn.metrics import average_precision_score, r2_score, roc_auc_score
+from scipy.stats import spearmanr
+from sklearn.metrics import average_precision_score, explained_variance_score, r2_score, roc_auc_score
 
 from ..blocks.de import mejia_weights
 
@@ -64,8 +67,8 @@ ctx : Context
 _DE = """\
 gt : ~scperteval.types.PerturbationDEResult
     Ground-truth DE result; ``gt.pvalue_adj`` defines the positive class.
-prediction : numpy.ndarray
-    Per-gene absolute DE score ranking from the candidate source, shape ``(G,)``.
+prediction : ~scperteval.types.PerturbationDEResult
+    Candidate DE result with signed statistic and adjusted p-values.
 ctx : Context
     Unused; present for signature compatibility."""
 
@@ -135,6 +138,35 @@ def pearson(gt, prediction, ctx):
 
 
 @_doc(params=_CENTROID)
+def spearman(gt, prediction, ctx):
+    """Spearman rank correlation between pseudobulk profiles."""
+    if np.ptp(gt) == 0:
+        return float("nan")
+    if np.ptp(prediction) == 0:
+        return 0.0
+    result: Any = spearmanr(gt, prediction)
+    return float(result.statistic)
+
+
+@_doc(params=_CENTROID)
+def cosine(gt, prediction, ctx):
+    """Cosine similarity between pseudobulk profiles."""
+    if np.ptp(gt) == 0:
+        return float("nan")
+    if np.ptp(prediction) == 0:
+        return 0.0
+    denominator = np.linalg.norm(gt) * np.linalg.norm(prediction)
+    return float(np.dot(gt, prediction) / denominator) if denominator > 0 else 0.0
+
+
+@_doc(params=_CENTROID)
+def squared_pearson(gt, prediction, ctx):
+    """Squared Pearson correlation between pseudobulk profiles."""
+    value = pearson(gt, prediction, ctx)
+    return value * value
+
+
+@_doc(params=_CENTROID)
 def r2(gt, prediction, ctx):
     r"""Coefficient of determination between pseudobulk profiles.
 
@@ -164,6 +196,18 @@ def r2(gt, prediction, ctx):
 
 
 @_doc(params=_CENTROID)
+def clipped_r2(gt, prediction, ctx):
+    """Coefficient of determination clipped to the interval [0, 1]."""
+    return float(np.clip(r2(gt, prediction, ctx), 0.0, 1.0))
+
+
+@_doc(params=_CENTROID)
+def explained_variance(gt, prediction, ctx):
+    """Explained-variance regression score."""
+    return float(explained_variance_score(gt, prediction))
+
+
+@_doc(params=_CENTROID)
 def mse(gt, prediction, ctx):
     r"""Mean squared error between pseudobulk profiles.
 
@@ -181,6 +225,12 @@ def mse(gt, prediction, ctx):
         Non-negative MSE; 0 is perfect.
     """
     return float(np.mean((gt - prediction) ** 2))
+
+
+@_doc(params=_CENTROID)
+def mae(gt, prediction, ctx):
+    """Mean absolute error between pseudobulk profiles."""
+    return float(np.mean(np.abs(gt - prediction)))
 
 
 @_doc(params=_CENTROID)
@@ -512,7 +562,8 @@ def de_auprc(gt, prediction, ctx):
     labels = gt.pvalue_adj < 0.05
     if labels.sum() == 0 or labels.sum() == labels.size:
         return float("nan")
-    return float(average_precision_score(labels, prediction))
+    score = np.abs(prediction.statistic) if hasattr(prediction, "statistic") else prediction
+    return float(average_precision_score(labels, score))
 
 
 @_doc(params=_DE)
@@ -534,7 +585,8 @@ def de_auroc(gt, prediction, ctx):
     labels = gt.pvalue_adj < 0.05
     if labels.sum() == 0 or labels.sum() == labels.size:
         return float("nan")
-    return float(roc_auc_score(labels, prediction))
+    score = np.abs(prediction.statistic) if hasattr(prediction, "statistic") else prediction
+    return float(roc_auc_score(labels, score))
 
 
 @_doc(params=_DE)
@@ -562,5 +614,6 @@ def de_overlap(gt, prediction, ctx, k=50):
     if k >= truth.size:
         return float("nan")
     top_truth = np.argpartition(-truth, k - 1)[:k]
-    top_prediction = np.argpartition(-prediction, k - 1)[:k]
+    score = np.abs(prediction.statistic) if hasattr(prediction, "statistic") else prediction
+    top_prediction = np.argpartition(-score, k - 1)[:k]
     return float(np.intersect1d(top_truth, top_prediction).size) / k

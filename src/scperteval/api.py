@@ -12,6 +12,7 @@ Re-exported at the package root, e.g. ``scperteval.calibrate(...)``.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass, replace
 from datetime import datetime
 from pathlib import Path
@@ -25,8 +26,8 @@ from .blocks.de import DE_METHODS
 from .context import CacheStore, Context
 from .dataset import Dataset
 from .predictions import PredictionSet
-from .protocols.resolve import resolve_protocols
-from .runner import compute_de, run_all
+from .protocols.resolve import resolve_protocol_inputs
+from .runner import compute_de, evaluate_sources, run_all
 from .sources import SOURCES
 from .types import Protocol, RunConfig
 
@@ -43,6 +44,7 @@ __all__ = [
     "de",
     "prepare",
     "score",
+    "truth_availability",
 ]
 
 #: The calibration outputs selectable from :func:`calibrate` (closed set).
@@ -159,11 +161,9 @@ def _require_prepared(prepared, verb: str) -> None:
         )
 
 
-def _single_protocol(protocol: str):
+def _single_protocol(protocol: str | Protocol):
     """Resolve one protocol spec to exactly one concrete protocol (error otherwise)."""
-    if not isinstance(protocol, str):
-        raise TypeError(f"protocol must be a single protocol name (str), not {type(protocol).__name__}")
-    protos = resolve_protocols([protocol])
+    protos = resolve_protocol_inputs([protocol])
     if len(protos) != 1:
         raise ValueError(
             f"the API evaluates one protocol per call; {protocol!r} resolves to {len(protos)} "
@@ -266,7 +266,7 @@ def _apply_center_on(proto: Protocol, center_on: str, ctx: Context) -> Protocol:
 
 def prepare(
     dataset: str | Path | AnnData,
-    protocols: str | list[str],
+    protocols: str | Protocol | Sequence[str | Protocol],
     *,
     subsample: int = 8192,
     seed: int = 42,
@@ -292,10 +292,12 @@ def prepare(
         A preprocessed ``.h5ad`` path, or an in-memory AnnData. If an AnnData, the handle holds a
         reference to it (not a copy) — do not mutate it while the handle is in use, or results
         become inconsistent.
-    protocols : str or list of str
-        The protocol(s) you intend to evaluate — used to precompute their spaces up front (pass
-        ``"all"`` for the whole catalog, or ``[]`` if you only need :func:`de` / no spaces). A verb
-        may still run a protocol not declared here; its space is then computed on first use.
+    protocols : str or Protocol or sequence of str or Protocol
+        The protocol(s) you intend to evaluate — registered names use the same specification
+        language as the CLI, while concrete :class:`~scperteval.types.Protocol` objects let Python
+        callers compose analysis-specific protocols without adding them to the curated CLI catalog.
+        Pass ``"all"`` for the whole catalog, or ``[]`` if you only need :func:`de` / no spaces. A
+        verb may still run a protocol not declared here; its space is then computed on first use.
     subsample, seed, min_cells, perturbation_key, control_label, workers, name
         Dataset/run knobs fixed for the handle; see :class:`~scperteval.types.RunConfig`.
     sources : dict[str, numpy.ndarray], optional
@@ -313,8 +315,8 @@ def prepare(
     Prepared
         An opaque, reusable handle.
     """
-    specs = [protocols] if isinstance(protocols, str) else list(protocols)
-    protos = resolve_protocols(specs) if specs else []
+    specs = [protocols] if isinstance(protocols, (str, Protocol)) else list(protocols)
+    protos = resolve_protocol_inputs(specs) if specs else []
     cfg = RunConfig(
         dataset=_display_name(dataset, name),
         protocols=[p.name for p in protos],
@@ -334,7 +336,7 @@ def prepare(
 
 def calibrate(
     prepared: Prepared,
-    protocol: str,
+    protocol: str | Protocol,
     *,
     de_method: DEMethodName = "t-test",
     calibrator: CalibratorName = "drf",
@@ -349,8 +351,9 @@ def calibrate(
     ----------
     prepared : Prepared
         A handle from :func:`prepare`.
-    protocol : str
-        A single protocol spec — a name (``"pearson_ctrl"``) or a tunable one (``"mse_top_k=30"``).
+    protocol : str or Protocol
+        A single registered protocol spec — a name (``"pearson_ctrl"``) or a tunable one
+        (``"mse_top_k=30"``) — or one fully concrete :class:`~scperteval.types.Protocol` object.
     de_method : str, optional
         DE backend for any DE-dependent part of the protocol (default ``"t-test"``).
     calibrator : {"drf", "bds"}, optional
@@ -397,7 +400,7 @@ def calibrate(
 
 def score(
     prepared: Prepared,
-    protocol: str,
+    protocol: str | Protocol,
     predictions: str | Path | AnnData,
     *,
     de_method: DEMethodName = "t-test",
@@ -410,8 +413,8 @@ def score(
     ----------
     prepared : Prepared
         A handle from :func:`prepare` (the ground-truth dataset).
-    protocol : str
-        A single protocol spec (see :func:`calibrate`).
+    protocol : str or Protocol
+        A single registered or concrete protocol (see :func:`calibrate`).
     predictions : str or pathlib.Path or anndata.AnnData
         Predicted cells — the same genes and perturbation labels as the dataset.
     de_method : str, optional
@@ -484,3 +487,50 @@ def de(
     if out_dir is not None:
         io.write_de(ctx.cfg, ctx.ds.var_names, ctx.perturbations, {method: (statistic, pvalue_adj)}, _stamp())
     return result
+
+
+def truth_availability(
+    prepared: Prepared,
+    protocols: str | Protocol | Sequence[str | Protocol],
+    *,
+    de_method: DEMethodName = "t-test",
+) -> pd.DataFrame:
+    """Truth-self-evaluate concrete protocols and report ground-truth-definedness.
+
+    This read-only diagnostic never loads model predictions.  Each protocol is evaluated with
+    the observed ground truth supplied on both sides, so a non-finite score or structured reason
+    identifies a protocol/data eligibility problem rather than model behaviour.  The result has
+    one row per protocol and perturbation: ``ground_truth_defined`` marks whether the self-score is
+    finite, ``undefined_reason`` explains an undefined value, and ``self_score`` is diagnostic only
+    (for example, Pearson is 1 and MSE is 0 when defined).
+
+    Reasons here come from truth-derived panels or raw metrics, for example
+    ``no_ground_truth_positive_degs``.  Calibration-only reasons such as
+    ``negative_beyond_protocol_perfect`` are instead reported by :func:`calibrate` and cannot
+    occur in this diagnostic.
+    """
+    _require_prepared(prepared, "truth_availability")
+    _check_de_method(de_method)
+    specs = [protocols] if isinstance(protocols, (str, Protocol)) else list(protocols)
+    resolved = resolve_protocol_inputs(specs)
+    ctx = prepared._run_context(
+        protocols=[protocol.name for protocol in resolved],
+        de_method=de_method,
+        truth="gt_all_cells",
+    )
+    ctx.warm(resolved)
+    rows = []
+    for protocol in resolved:
+        perts, outcomes = evaluate_sources(protocol, ctx, {"truth": ctx.cfg.truth})
+        for pert, raw in zip(perts, outcomes):
+            outcome = raw["truth"]
+            rows.append(
+                {
+                    "protocol": protocol.name,
+                    "perturbation": pert,
+                    "ground_truth_defined": outcome.undefined_reason is None and np.isfinite(outcome.value),
+                    "undefined_reason": outcome.undefined_reason,
+                    "self_score": outcome.value,
+                }
+            )
+    return pd.DataFrame(rows)

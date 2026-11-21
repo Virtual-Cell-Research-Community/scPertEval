@@ -10,7 +10,8 @@ from time import perf_counter
 import numpy as np
 from threadpoolctl import threadpool_limits
 
-from .types import Calibrator, Protocol
+from .blocks.panels import UndefinedPanel
+from .types import Calibrator, MetricOutcome, Protocol
 
 #: Generic (positive, negative) control defaults keyed on ``representation`` — the base tier of
 #: control resolution, used unless a protocol declares a default or a run overrides one.
@@ -146,35 +147,75 @@ def _finalize(p, calibrator, perts, raws_list, needed):
     Each row records both the resolved control *source* names (``needed``, one column per calibrator
     input) and their raw metric *values* (``raw_{name}``), alongside the calibrated score.
     """
-    per_pert = [calibrator.per_pert(raws, p) for raws in raws_list]
+    numeric = [{name: outcome.value for name, outcome in raws.items()} for raws in raws_list]
+    per_pert = [
+        _calibrated_outcome(calibrator, raw_outcomes, raw_values, p)
+        for raw_outcomes, raw_values in zip(raws_list, numeric)
+    ]
     rows = [
         {
             "protocol": p.name,
             "perturbation": pert,
             **needed,
-            **{f"raw_{name}": raws[name] for name in raws},
-            calibrator.name: value,
+            **{f"raw_{name}": outcome.value for name, outcome in raws.items()},
+            **{f"raw_{name}_undefined_reason": outcome.undefined_reason or np.nan for name, outcome in raws.items()},
+            "undefined_reason": calibrated.undefined_reason or np.nan,
+            calibrator.name: calibrated.value,
         }
-        for pert, raws, value in zip(perts, raws_list, per_pert)
+        for pert, raws, calibrated in zip(perts, raws_list, per_pert)
     ]
-    return calibrator.aggregate(np.asarray(per_pert, dtype=float)), rows
+    return calibrator.aggregate(np.asarray([outcome.value for outcome in per_pert], dtype=float)), rows
+
+
+def _calibrated_outcome(calibrator, raw_outcomes, raw_values, protocol) -> MetricOutcome:
+    """Propagate metric undefinedness before applying one structured calibrator."""
+    for outcome in raw_outcomes.values():
+        if outcome.undefined_reason is not None or not np.isfinite(outcome.value):
+            return MetricOutcome(float("nan"), outcome.undefined_reason or "metric_undefined")
+    result = calibrator.per_pert(raw_values, protocol)
+    if isinstance(result, MetricOutcome):
+        return result
+    value = float(result)
+    return MetricOutcome(value, None if np.isfinite(value) else "calibrator_undefined")
 
 
 def _run_per_perturbation(p: Protocol, ctx, calibrator: Calibrator, needed: dict):
     """Score one perturbation at a time (across a thread pool), gt vs each control."""
-
-    def work(pert):
-        ctx.current_pert = pert
-        gt = ctx.view(pert, ctx.cfg.truth, p)
-        return {name: p.metric(gt, ctx.view(pert, src, p), ctx) for name, src in needed.items()}
-
-    perts = ctx.perturbations
     start = perf_counter()
-    with ThreadPoolExecutor(max_workers=_n_workers(ctx.cfg)) as pool:
-        raws_list = list(pool.map(work, perts))
+    perts, raws_list = evaluate_sources(p, ctx, needed)
     seconds = perf_counter() - start
     agg, rows = _finalize(p, calibrator, perts, raws_list, needed)
     return agg, rows, seconds
+
+
+def _evaluate_per_perturbation(p: Protocol, ctx, sources: dict):
+    """Evaluate source metrics independently for every perturbation."""
+
+    def work(pert):
+        ctx.current_pert = pert
+        try:
+            gt = ctx.view(pert, ctx.cfg.truth, p)
+            return {name: _metric_outcome(p, gt, ctx.view(pert, src, p), ctx) for name, src in sources.items()}
+        except UndefinedPanel as error:
+            return {name: MetricOutcome(float("nan"), error.reason) for name in sources}
+
+    perts = ctx.perturbations
+    with ThreadPoolExecutor(max_workers=_n_workers(ctx.cfg)) as pool:
+        raws_list = list(pool.map(work, perts))
+    return perts, raws_list
+
+
+def _metric_outcome(p: Protocol, gt, prediction, ctx) -> MetricOutcome:
+    """Normalize legacy float metrics and structured metrics to one internal result."""
+    return _as_outcome(p.metric(gt, prediction, ctx))
+
+
+def _as_outcome(result) -> MetricOutcome:
+    """Normalize one already-computed metric result."""
+    if isinstance(result, MetricOutcome):
+        return result
+    value = float(result)
+    return MetricOutcome(value, None if np.isfinite(value) else "metric_undefined")
 
 
 def _run_dataset(p: Protocol, ctx, calibrator: Calibrator, needed: dict):
@@ -184,6 +225,15 @@ def _run_dataset(p: Protocol, ctx, calibrator: Calibrator, needed: dict):
     lists, then read off each perturbation's score. Perturbations are treated as a single
     group (these datasets are single-covariate); drf instead ranks within each covariate group.
     """
+    start = perf_counter()
+    perts, raws_list = evaluate_sources(p, ctx, needed)
+    seconds = perf_counter() - start
+    agg, rows = _finalize(p, calibrator, perts, raws_list, needed)
+    return agg, rows, seconds
+
+
+def _evaluate_dataset(p: Protocol, ctx, sources: dict):
+    """Evaluate dataset-scope sources once and unpack one outcome per perturbation."""
     perts = ctx.perturbations
 
     def collect(source):
@@ -193,14 +243,18 @@ def _run_dataset(p: Protocol, ctx, calibrator: Calibrator, needed: dict):
             out.append(ctx.view(pert, source, p))
         return out
 
-    start = perf_counter()
     gt = collect(ctx.cfg.truth)
-    scores = {name: p.metric(gt, collect(src), ctx) for name, src in needed.items()}
-    seconds = perf_counter() - start
+    scores = {name: p.metric(gt, collect(src), ctx) for name, src in sources.items()}
 
-    raws_list = [{name: float(scores[name][i]) for name in needed} for i in range(len(perts))]
-    agg, rows = _finalize(p, calibrator, perts, raws_list, needed)
-    return agg, rows, seconds
+    raws_list = [{name: _as_outcome(scores[name][i]) for name in sources} for i in range(len(perts))]
+    return perts, raws_list
+
+
+def evaluate_sources(p: Protocol, ctx, sources: dict):
+    """Evaluate a protocol against named sources through its declared execution scope."""
+    if p.scope == "dataset":
+        return _evaluate_dataset(p, ctx, sources)
+    return _evaluate_per_perturbation(p, ctx, sources)
 
 
 def compute_de(ctx):

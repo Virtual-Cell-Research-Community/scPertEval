@@ -10,6 +10,7 @@ from scperteval.context import Context
 from scperteval.dataset import Dataset
 from scperteval.protocols.table import PROTOCOLS
 from scperteval.runner import run_protocol
+from scperteval.types import MetricOutcome, Protocol
 
 
 def _run(name, calibrator, dataset_adata, cfg):
@@ -51,6 +52,24 @@ def test_de_protocol_calibrates(dataset_adata, cfg_factory):
     # the de representation should produce a finite, well-defined auprc (distinct DE blocks)
     agg, _, _ = _run("de_auprc", "drf", dataset_adata, cfg_factory())
     assert np.isfinite(agg["mean"])
+
+
+def test_undefined_raw_metric_is_not_counted_as_bds_loss(dataset_adata, cfg_factory):
+    def undefined(gt, candidate, ctx):
+        return MetricOutcome(float("nan"), "constant_ground_truth")
+
+    protocol = Protocol("undefined", undefined, representation="centroid")
+    ctx = Context(Dataset(dataset_adata, cfg_factory()), cfg_factory())
+    _, rows, _ = run_protocol(protocol, ctx, CALIBRATORS["bds"])
+    assert all(np.isnan(row["bds"]) for row in rows)
+    assert {row["undefined_reason"] for row in rows} == {"constant_ground_truth"}
+
+
+def test_drf_records_beyond_perfect_reason():
+    protocol = Protocol("bounded", lambda *_: 0.0, representation="centroid", perfect=1.0)
+    outcome = CALIBRATORS["drf"].per_pert({"positive": 0.8, "negative": 1.1}, protocol)
+    assert np.isnan(outcome.value)
+    assert outcome.undefined_reason == "negative_beyond_protocol_perfect"
 
 
 # --- Ahlmann-Eltze et al. 2025: heg_space + l2 (const-ae's protocol, ported natively) ---

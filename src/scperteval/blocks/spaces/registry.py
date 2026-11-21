@@ -223,6 +223,39 @@ class SpaceRegistry(Registry):
         """Every defined space, by name — the palette, not the registered instances."""
         return [self._catalog[n] for n in sorted(self._catalog)]
 
+    def custom_subset(self, name: str, rule: Callable, *, per_pert: bool, description: str) -> str:
+        """Register an analysis-composed gene subset and return its concrete space name.
+
+        This is the runtime composition seam used by concrete :class:`Protocol` objects.  It is
+        deliberately separate from the curated, decorator-defined catalog shown by the CLI.
+        Callers must encode every semantic parameter in ``name``; reusing a name is idempotent.
+        """
+        if name in self:
+            return name
+        with self._lock:
+            if name in self:
+                return name
+            self._define(Space(name, rule, None, None, description, True, per_pert))
+        return self.instance(name)
+
+    def custom_transform(
+        self,
+        name: str,
+        rule: Callable,
+        *,
+        per_pert: bool,
+        description: str,
+        precompute: Callable | None = None,
+    ) -> str:
+        """Register an analysis-composed transform outside the curated CLI catalog."""
+        if name in self:
+            return name
+        with self._lock:
+            if name in self:
+                return name
+            self._define(Space(name, rule, None, None, description, True, per_pert, False, precompute))
+        return self.instance(name)
+
     # -- instantiating -------------------------------------------------------------
 
     def combine_subsets(self, op: Callable, *names: str, name: str, description: str | None = None) -> str:
