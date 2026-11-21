@@ -98,6 +98,67 @@ def test_de_single_method(dataset_adata):
     assert stat.shape == padj.shape == (4, 60)
 
 
+@pytest.mark.parametrize("target", ["gt_half", "gt_all_cells", "tech_dup"])
+@pytest.mark.parametrize("reference", ["all_perturbed", "control"])
+def test_de_supports_cell_source_combinations(dataset_adata, target, reference):
+    result = sp.de(prep(dataset_adata, []), "t-test", target=target, reference=reference)
+    assert result.statistic.shape == result.pvalue_adj.shape == (4, 60)
+    assert np.isfinite(result.statistic.to_numpy()).all()
+
+
+def test_de_accepts_custom_registered_cell_source(dataset_adata):
+    from scperteval.sources import SOURCES
+
+    @SOURCES.register("test_de_custom_cells", provides="cells", description="test double")
+    def _custom_cells(ctx, pert):
+        return ctx.ds.cells(pert)
+
+    try:
+        prepared = prep(dataset_adata, [])
+        custom = sp.de(prepared, "t-test", target="test_de_custom_cells", reference="control")
+        expected = sp.de(prepared, "t-test", target="gt_all_cells", reference="control")
+        pd.testing.assert_frame_equal(custom.statistic, expected.statistic)
+        pd.testing.assert_frame_equal(custom.pvalue_adj, expected.pvalue_adj)
+    finally:
+        SOURCES._items.pop("test_de_custom_cells", None)
+
+
+def test_de_selects_requested_perturbations_in_order(dataset_adata):
+    prepared = prep(dataset_adata, [])
+    complete = sp.de(prepared, "t-test")
+    selected = sp.de(prepared, "t-test", perturbations=["pertC", "pertA"])
+    expected = ["pertC", "pertA"]
+    assert list(selected.statistic.index) == expected
+    assert selected.statistic.shape == (2, 60)
+    pd.testing.assert_frame_equal(selected.statistic, complete.statistic.loc[expected])
+    pd.testing.assert_frame_equal(selected.pvalue_adj, complete.pvalue_adj.loc[expected])
+
+
+def test_de_rejects_invalid_perturbation_selections(dataset_adata):
+    prepared = prep(dataset_adata, [])
+    with pytest.raises(ValueError, match="unknown perturbation"):
+        sp.de(prepared, "t-test", perturbations=["missing"])
+    with pytest.raises(ValueError, match="duplicate perturbation"):
+        sp.de(prepared, "t-test", perturbations=["pertA", "pertA"])
+    with pytest.raises(ValueError, match="empty"):
+        sp.de(prepared, "t-test", perturbations=[])
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "message"),
+    [
+        ({"target": "nope"}, "unknown DE target source"),
+        ({"reference": "nope"}, "unknown DE reference source"),
+        ({"target": "control_mean"}, "expected 'cells'"),
+        ({"reference": "global_mean"}, "expected 'cells'"),
+        ({"target": "prediction"}, "requires predictions"),
+    ],
+)
+def test_de_rejects_invalid_sources(dataset_adata, kwargs, message):
+    with pytest.raises(ValueError, match=message):
+        sp.de(prep(dataset_adata, []), "t-test", **kwargs)
+
+
 def test_de_rejects_unknown_method(dataset_adata):
     with pytest.raises(ValueError, match="unknown DE method"):
         sp.de(prep(dataset_adata, []), "nope")
@@ -218,6 +279,10 @@ def test_out_dir_writes_files(dataset_adata, tmp_path):
 
     with h5py.File(h5[0]) as f:
         assert f["t-test"]["statistic"].shape == (4, 60)
+        assert f.attrs["target"] == "gt_half"
+        assert f.attrs["reference"] == "all_perturbed"
+        assert f.attrs["subsample"] == PREP["subsample"]
+        assert f.attrs["seed"] == PREP["seed"]
         assert f["genes"].shape == (60,)
 
 

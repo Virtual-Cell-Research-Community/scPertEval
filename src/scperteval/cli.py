@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 from datetime import datetime
+from pathlib import Path
 
 from . import io
 from .blocks.de import DE_METHODS
@@ -14,7 +15,7 @@ from .dataset import Dataset
 from .predictions import PredictionSet
 from .protocols.resolve import _concrete, _resolve_token, available, resolve_protocols  # noqa: F401 (re-exported)
 from .protocols.table import TABLE
-from .runner import _resolve_candidates, compute_de, run_all
+from .runner import _resolve_candidates, compute_de, resolve_de_perturbations, run_all
 from .sources import SOURCES
 from .types import RunConfig
 
@@ -100,12 +101,35 @@ def cmd_de(args) -> None:
         control_label=args.control_label,
     )
     ctx = Context(Dataset.load(cfg.dataset, cfg), cfg)
-    ctx._ensure_reference_sums()
-    statistic, pvalue_adj = compute_de(ctx)
+    requested = None
+    if args.perturbations_file is not None:
+        requested = [
+            line
+            for raw in args.perturbations_file.read_text().splitlines()
+            if (line := raw.strip()) and not line.startswith("#")
+        ]
+    perturbations = resolve_de_perturbations(ctx, requested)
+    statistic, pvalue_adj = compute_de(
+        ctx,
+        target=args.target,
+        reference=args.reference,
+        perturbations=perturbations,
+    )
     stamp = datetime.now().strftime("%Y-%m-%dT%H%M%S")
-    path = io.write_de(cfg, ctx.ds.var_names, ctx.perturbations, {args.method: (statistic, pvalue_adj)}, stamp)
+    path = io.write_de(
+        cfg,
+        ctx.ds.var_names,
+        perturbations,
+        {args.method: (statistic, pvalue_adj)},
+        stamp,
+        target=args.target,
+        reference=args.reference,
+    )
     if not args.quiet:
-        print(f"-> {path}  ({len(ctx.perturbations)} perturbations, method={args.method})")
+        print(
+            f"-> {path}  ({len(perturbations)} perturbations, method={args.method}, "
+            f"target={args.target}, reference={args.reference})"
+        )
 
 
 def cmd_list(args) -> None:
@@ -221,12 +245,25 @@ def build_parser() -> argparse.ArgumentParser:
     score.set_defaults(func=cmd_score)
 
     de = sub.add_parser("de", help="write per-gene DE (statistic + adj p) for one method to HDF5")
+    de_cell_sources = [n for n in SOURCES.names() if SOURCES.meta(n).get("provides") == "cells" and n != "prediction"]
     de.add_argument("dataset", help="preprocessed .h5ad")
     de.add_argument(
         "--method",
         choices=DE_METHODS.names(),
         default="t-test",
-        help="DE method to compute (GT first-half vs all-perturbed)",
+        help="DE method to compute",
+    )
+    de.add_argument(
+        "--target",
+        choices=de_cell_sources,
+        default="gt_half",
+        help="target cell source per perturbation (default: gt_half)",
+    )
+    de.add_argument(
+        "--reference",
+        choices=de_cell_sources,
+        default="all_perturbed",
+        help="reference cell source (default: all_perturbed, leave-one-out)",
     )
     de.add_argument("--subsample", type=int, default=8192)
     de.add_argument("--seed", type=int, default=42)
@@ -235,6 +272,11 @@ def build_parser() -> argparse.ArgumentParser:
     de.add_argument("--min-cells", type=int, default=30)
     de.add_argument("--perturbation-key", default="perturbation")
     de.add_argument("--control-label", default="control")
+    de.add_argument(
+        "--perturbations-file",
+        type=Path,
+        help="optional text file selecting perturbations in output order (one label per line)",
+    )
     de.add_argument("--quiet", action="store_true")
     de.set_defaults(func=cmd_de)
 
