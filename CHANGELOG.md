@@ -30,10 +30,22 @@
 
 ### Changed
 
-- `Protocol.better` and `Protocol.perfect` now default to `None`, automatically infer their values
-  from built-in metrics in `scperteval.protocols.metrics` (including `functools.partial` wrappers),
-  and fail fast in `calibrate()` when omitted on custom user metrics instead of silently assuming
-  `better="higher", perfect=1.0`.
+- Built-in metrics in `scperteval.protocols.metrics` now declare their full
+  `(representation, scope, better, perfect)` contract: `Protocol` infers all four automatically
+  (unwrapping `functools.partial`), enforces `representation`/`scope` against contradictions,
+  rejects wrong-representation fields (`centering` on non-centroid, `reference`/`neg_reference` on
+  non-DE), and warns when a DE protocol's `space` uses a different `reference` than
+  `Protocol.reference`.
+- Custom `Protocol` calibration now resolves non-degenerate generic negative defaults (`control_mean`
+  when `centering="all_perturbed_mean"`, `global_mean` for dataset-scope centroids, and hybrid
+  `neg_reference="control"` for DE protocols testing `all_perturbed` vs `all_perturbed`) and fails
+  fast on explicit self-canceling controls.
+- `weighted_mse`, `weighted_pearson`, and `weighted_r2` now align their DE weights to any
+  `SubsetSpace` (e.g. `hvg(2000)` or `full() - own_target()`) and accept an optional `reference`
+  argument.
+- `de_auprc`, `de_macro_f1`, and `de_overlap_at_truth_size` now return `NaN` with
+  `undefined_reason="single_ground_truth_class"` when every gene in the universe is positive
+  (matching `de_auroc`).
 
 - Sample datasets in `gs://scperteval` now use Google Cloud Storage Requester Pays and require a
   Google account and a billing-enabled Google Cloud project. See the

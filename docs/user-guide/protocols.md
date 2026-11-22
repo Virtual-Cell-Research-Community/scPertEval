@@ -47,7 +47,8 @@ Here is a complete new protocol: mean absolute error on the standard pseudobulk 
    profile; `prediction` is the candidate being compared against it (under `calibrate`, scPertEval
    calls the function once for the positive control and once for the negative; under `score`, once
    with your model's prediction). `ctx` is the dataset context, needed by only a few metrics —
-   ignore it otherwise. Return a single number.
+   ignore it otherwise. Return a single number (or a `MetricOutcome` to attach a structured
+   `undefined_reason`).
 
 2. Add a row to [`src/scperteval/protocols/table.py`](https://github.com/Virtual-Cell-Research-Community/scPertEval/blob/main/src/scperteval/protocols/table.py):
 
@@ -85,7 +86,7 @@ A reference-centred profile — the `centering` source subtracted off — is wha
 |---|---|
 | `centroid` | a 1-D pseudobulk vector (one value per gene) |
 | `population` | a `(cells × genes)` matrix |
-| `de` | a `PerturbationDEResult` (for the ground truth) / per-gene `\|statistic\|` ranking (for a prediction) |
+| `de` | a `PerturbationDEResult` for both ground truth and candidate |
 
 **`scope`** is the independent companion axis — *how many* perturbations the metric sees at once:
 
@@ -126,6 +127,7 @@ degs_<padj>         — ground-truth DEGs at adjusted p < padj (default 0.05)
 full                — all genes, no transform
 heg_<k>             — top k genes by control-condition expression (default 1000)
 hvg_<k>             — top k genes by control-condition normalized dispersion (default 2000)
+own_target          — gene(s) targeted by the current perturbation
 pca_<k>             — top k principal components (fit on the dataset) (default 50)
 perturbed_and_hvgs  — HVG union perturbed genes — a panel introduced in Miller et al. 2025
 perturbed_genes     — genes targeted by a perturbation in the dataset
@@ -155,6 +157,7 @@ $ scperteval list sources
 all_perturbed  (cells) — all-perturbed reference sample, leave-one-out (single-cell negative control)
 all_perturbed_mean (centroid) — all-perturbed mean, excluding the target — leave-one-out (pseudobulk sibling of all_perturbed; pseudobulk negative control)
 control        (cells) — non-targeting control cells
+control_mean   (centroid) — non-targeting control pseudobulk mean (centroid)
 global_mean    (centroid) — mean of all perturbations — shared baseline for the ranking protocols
 gt_all_cells   (cells) — ground truth — all of a perturbation's real cells (prediction-scoring truth)
 gt_half        (cells) — ground truth — the first half of a perturbation's cells (calibration truth)
@@ -172,7 +175,7 @@ The positive/negative controls a protocol calibrates against are **resolved at r
 tiers: a **generic default per representation** (`centroid` → `interpolated`/`all_perturbed_mean`;
 `population` and `de` → `tech_dup`/`all_perturbed`), overridden by a protocol's **declared default**
 only where its identity requires it (the allpert-centred `pearson_pert*` rows declare
-`default_negative="control"`, and the dataset-scope `rank`/`transpose_rank` rows declare
+`default_negative="control_mean"`, and the dataset-scope `rank`/`transpose_rank`/`nir` rows declare
 `default_negative="global_mean"`). Either tier is in turn overridable per run with
 `--positive`/`--negative` (`scperteval list protocols` prints each protocol's resolved defaults).
 The controls actually used are recorded per perturbation in the output (`positive`/`negative`

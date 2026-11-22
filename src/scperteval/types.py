@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import warnings
 from collections.abc import Callable
 from dataclasses import dataclass, field, replace
 from functools import partial
@@ -94,6 +95,27 @@ class Param:
     space: Callable | None = None
 
 
+_VALID_REPRESENTATIONS = ("centroid", "population", "de")
+_VALID_SCOPES = ("perturbation", "dataset")
+
+
+def _space_de_references(space) -> list[tuple[str, str]]:
+    """Collect ``(rule_name, reference)`` pairs from any DE-backed subsets inside ``space``."""
+    out: list[tuple[str, str]] = []
+    left, right = getattr(space, "left", None), getattr(space, "right", None)
+    if left is not None and right is not None:
+        out.extend(_space_de_references(left))
+        out.extend(_space_de_references(right))
+        return out
+    params = getattr(space, "params", None)
+    name = getattr(space, "name", None)
+    if isinstance(params, tuple) and isinstance(name, str):
+        ref = dict(params).get("reference")
+        if isinstance(ref, str):
+            out.append((name, ref))
+    return out
+
+
 @dataclass(frozen=True)
 class Protocol:
     """An evaluation protocol: a pure metric plus its data and control wiring.
@@ -126,29 +148,33 @@ class Protocol:
     Together they let the calibrator orient the score: DRF measures how far the positive
     control moves from the negative-control floor toward ``perfect`` in the ``better``
     direction, and BDS counts the perturbations where the positive control is ``better``
-    than the negative. When omitted, built-in metrics in :mod:`scperteval.protocols.metrics`
-    (including ``functools.partial`` wrappers) supply their intrinsic ``better`` / ``perfect``
-    defaults automatically. Custom metrics may omit both for ``score()``, while ``calibrate()``
-    requires ``better`` (and ``perfect`` for DRF).
+    than the negative.
+
+    Built-in metrics in :mod:`scperteval.protocols.metrics` (including ``functools.partial``
+    wrappers) declare their intrinsic ``(representation, scope, better, perfect)`` contract:
+    ``representation`` and ``scope`` are inferred automatically and strictly enforced against
+    contradictions, while ``better`` and ``perfect`` act as overridable defaults. Custom user
+    metrics remain plain functions — specify ``representation`` explicitly (``scope`` defaults
+    to ``"perturbation"``), and specify ``better`` / ``perfect`` when calling ``calibrate()``.
     """
 
     #: Protocol identifier used on the CLI (``-p name``) and in output CSVs.
     name: str
     #: Pure metric function ``(gt, prediction, ctx) -> float``.
     metric: Callable
-    #: One of ``"centroid"`` (pseudobulk vector), ``"population"`` (cells × genes matrix), or ``"de"`` (PerturbationDEResult).
-    representation: str
-    #: ``"perturbation"`` (default) or ``"dataset"`` — how many perturbations the metric sees at once.
-    scope: str = "perturbation"
+    #: One of ``"centroid"``, ``"population"``, or ``"de"``; inferred for built-in metrics.
+    representation: str | None = None
+    #: ``"perturbation"`` (default) or ``"dataset"``; inferred for built-in metrics.
+    scope: str | None = None
     #: Feature space applied before scoring — a registered space name or a composable
     #: :class:`~scperteval.blocks.spaces.FeatureSpace` object (default ``"full"``).
     space: str | FeatureSpace = "full"
     #: A centroid **source name** whose centroid is subtracted before scoring
     #: (e.g. ``"control_mean"``, ``"all_perturbed_mean"``), or ``None`` for no centering.
     centering: str | None = None
-    #: Source used as the reference for the GT DE computation (default ``"all_perturbed"``).
-    reference: str = "all_perturbed"
-    #: Reference for the negative-control DE computation; ``None`` uses ``reference``.
+    #: Reference source for ``representation="de"`` (defaults to ``"all_perturbed"`` for DE protocols; invalid otherwise).
+    reference: str | None = None
+    #: Reference for the negative-control DE computation; ``None`` uses ``reference`` (or ``"control"`` when hybrid).
     neg_reference: str | None = None
     #: ``"higher"`` or ``"lower"`` — which direction improves the score; inferred for built-in metrics.
     better: str | None = None
@@ -168,26 +194,97 @@ class Protocol:
     requires_extra: str | None = None
 
     def __post_init__(self) -> None:
-        if self.better is None or self.perfect is None:
-            fn = self.metric
-            while isinstance(fn, partial):
-                fn = fn.func
-            scale = getattr(fn, "_scperteval_scale", None)
-            if scale is not None:
-                default_better, default_perfect = scale
-                if self.better is None:
-                    object.__setattr__(self, "better", default_better)
-                if self.perfect is None:
-                    object.__setattr__(self, "perfect", default_perfect)
+        fn = self.metric
+        while isinstance(fn, partial):
+            fn = fn.func
+        meta = getattr(fn, "_scperteval_metric", None)
+
+        if self.representation is None:
+            if meta is not None:
+                object.__setattr__(self, "representation", meta[0])
+            else:
+                raise ValueError(
+                    f"Protocol {self.name!r}: representation is required for custom metrics "
+                    f"(choose one of {', '.join(repr(r) for r in _VALID_REPRESENTATIONS)})."
+                )
+        if self.representation not in _VALID_REPRESENTATIONS:
+            raise ValueError(
+                f"Protocol {self.name!r}: representation must be one of "
+                f"{', '.join(repr(r) for r in _VALID_REPRESENTATIONS)}, got {self.representation!r}"
+            )
+        if meta is not None and self.representation != meta[0]:
+            metric_name = getattr(fn, "__name__", repr(fn))
+            raise ValueError(
+                f"Protocol {self.name!r}: metric {metric_name!r} requires "
+                f"representation={meta[0]!r}, got {self.representation!r}"
+            )
+
+        if self.scope is None:
+            object.__setattr__(self, "scope", meta[1] if meta is not None else "perturbation")
+        if self.scope not in _VALID_SCOPES:
+            raise ValueError(
+                f"Protocol {self.name!r}: scope must be one of "
+                f"{', '.join(repr(s) for s in _VALID_SCOPES)}, got {self.scope!r}"
+            )
+        if meta is not None and self.scope != meta[1]:
+            metric_name = getattr(fn, "__name__", repr(fn))
+            raise ValueError(
+                f"Protocol {self.name!r}: metric {metric_name!r} requires scope={meta[1]!r}, got {self.scope!r}"
+            )
+
+        if meta is not None:
+            if self.better is None:
+                object.__setattr__(self, "better", meta[2])
+            if self.perfect is None:
+                object.__setattr__(self, "perfect", meta[3])
         if self.better is not None and self.better not in ("higher", "lower"):
             raise ValueError(f"Protocol {self.name!r}: better must be 'higher' or 'lower', got {self.better!r}")
         if self.perfect is not None and not np.isfinite(self.perfect):
             raise ValueError(f"Protocol {self.name!r}: perfect must be finite, got {self.perfect!r}")
 
+        if self.centering is not None and self.representation != "centroid":
+            # TODO: consider supporting cell-level centering on representation="population" for non-translation-invariant metrics.
+            raise ValueError(
+                f"Protocol {self.name!r}: centering={self.centering!r} only applies to "
+                f"representation='centroid', got {self.representation!r}"
+            )
+
+        if self.representation != "de":
+            if self.reference is not None or self.neg_reference is not None:
+                raise ValueError(
+                    f"Protocol {self.name!r}: reference/neg_reference only apply to representation='de' "
+                    f"(for DEG spaces or DE-weighted metrics on {self.representation!r} protocols, pass "
+                    f"reference=... to spaces.degs(), spaces.top(), or partial(weighted_*, reference=...))."
+                )
+        else:
+            if self.reference is None:
+                object.__setattr__(self, "reference", "all_perturbed")
+            for space_name, space_ref in _space_de_references(self.space):
+                if space_ref != self.reference:
+                    warnings.warn(
+                        f"Protocol {self.name!r}: space {space_name!r} uses reference={space_ref!r}, "
+                        f"which differs from Protocol.reference={self.reference!r}.",
+                        UserWarning,
+                        stacklevel=3,
+                    )
+
     @property
     def parameterised(self) -> bool:
         """Whether this protocol takes a CLI-supplied parameter."""
         return self.param is not None
+
+    def effective_neg_reference(self, negative_source: str) -> str:
+        """Reference population for ``negative_source`` in a DE protocol.
+
+        Uses explicit ``neg_reference`` when set; otherwise avoids testing ``all_perturbed``
+        against itself by falling back to ``"control"`` (the hybrid DE setup).
+        """
+        if self.neg_reference is not None:
+            return self.neg_reference
+        ref = self.reference or "all_perturbed"
+        if negative_source == "all_perturbed" and ref == "all_perturbed":
+            return "control"
+        return ref
 
     def resolve(self, value) -> Protocol:
         """Concrete protocol for a tunable one at ``value`` (sets the space or metric arg)."""

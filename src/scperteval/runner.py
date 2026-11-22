@@ -27,6 +27,17 @@ def _n_workers(cfg) -> int:
     return cfg.workers if cfg.workers > 0 else max(1, min(16, (os.cpu_count() or 2) - 2))
 
 
+def _generic_negative(p: Protocol) -> str:
+    """Representation- and protocol-aware default negative control (never self-canceling)."""
+    assert p.representation is not None
+    if p.representation == "centroid":
+        if p.scope == "dataset":
+            return "global_mean"
+        if p.centering == "all_perturbed_mean":
+            return "control_mean"
+    return GENERIC_CONTROLS[p.representation][1]
+
+
 def _resolve_candidates(p: Protocol, cfg) -> dict:
     """Map each calibrator input (candidate name) to a source name.
 
@@ -34,7 +45,9 @@ def _resolve_candidates(p: Protocol, cfg) -> dict:
     else the protocol's declared default, else the representation's generic default. ``prediction``
     is always the model-prediction source (used by the ``score`` calibrator).
     """
-    gen_pos, gen_neg = GENERIC_CONTROLS[p.representation]
+    assert p.representation is not None
+    gen_pos = GENERIC_CONTROLS[p.representation][0]
+    gen_neg = _generic_negative(p)
     return {
         "positive": cfg.positive if cfg.positive != "auto" else (p.default_positive or gen_pos),
         "negative": cfg.negative if cfg.negative != "auto" else (p.default_negative or gen_neg),
@@ -195,6 +208,7 @@ def _evaluate_per_perturbation(p: Protocol, ctx, candidates: dict[str, str]):
 
     def work(pert):
         ctx.current_pert = pert
+        ctx.current_space = p.space
         try:
             gt = ctx.view(pert, ctx.cfg.truth, p)
             return {name: _as_outcome(p.metric(gt, ctx.view(pert, src, p), ctx)) for name, src in candidates.items()}
@@ -213,6 +227,7 @@ def _evaluate_dataset(p: Protocol, ctx, candidates: dict[str, str]):
 
     def collect(source):
         out = []
+        ctx.current_space = p.space
         for pert in perts:
             ctx.current_pert = pert
             out.append(ctx.view(pert, source, p))
@@ -301,3 +316,19 @@ def _check_sources(p: Protocol, candidates: dict, ctx) -> None:
                 f"{p.name}: {name} source {src!r} provides "
                 f"{ctx.source_meta(src).get('provides')!r}, but a single-cell protocol needs cells"
             )
+    if p.representation == "centroid" and p.centering is not None and candidates.get("negative") == p.centering:
+        raise ValueError(
+            f"{p.name}: negative control {candidates['negative']!r} cancels with centering={p.centering!r} "
+            f"(produces an all-zero vector); choose a different negative control."
+        )
+    if p.representation == "de":
+        _validate_de_source(ctx, p.reference or "all_perturbed", "reference")
+        if "negative" in candidates:
+            neg_src = candidates["negative"]
+            neg_ref = p.effective_neg_reference(neg_src)
+            _validate_de_source(ctx, neg_ref, "reference")
+            if neg_src == neg_ref:
+                raise ValueError(
+                    f"{p.name}: DE negative control {neg_src!r} cannot be tested against the same "
+                    f"reference {neg_ref!r}; set neg_reference or choose a different negative control."
+                )
