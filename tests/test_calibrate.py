@@ -55,15 +55,41 @@ def test_de_protocol_calibrates(dataset_adata, cfg_factory):
 
 
 def test_undefined_raw_metric_is_not_counted_as_bds_loss(dataset_adata, cfg_factory):
+    import warnings
+
     def undefined(gt, candidate, ctx):
         return MetricOutcome(float("nan"), "constant_ground_truth")
 
     protocol = Protocol("undefined", undefined, representation="centroid")
     ctx = Context(Dataset(dataset_adata, cfg_factory()), cfg_factory())
-    agg, rows, _ = run_protocol(protocol, ctx, CALIBRATORS["bds"])
-    assert np.isnan(agg["bds"])
-    assert all(np.isnan(row["bds"]) for row in rows)
-    assert {row["undefined_reason"] for row in rows} == {"constant_ground_truth"}
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", RuntimeWarning)
+        bds_agg, bds_rows, _ = run_protocol(protocol, ctx, CALIBRATORS["bds"])
+        drf_agg, drf_rows, _ = run_protocol(protocol, ctx, CALIBRATORS["drf"])
+    assert np.isnan(bds_agg["bds"])
+    assert all(np.isnan(row["bds"]) for row in bds_rows)
+    assert {row["undefined_reason"] for row in bds_rows} == {"constant_ground_truth"}
+    assert np.isnan(drf_agg["mean"]) and np.isnan(drf_agg["median"])
+    assert all(np.isnan(row["drf"]) for row in drf_rows)
+    assert {row["undefined_reason"] for row in drf_rows} == {"constant_ground_truth"}
+
+
+def test_score_propagates_undefined_outcome_reason(dataset_adata, predictions_factory):
+    import warnings
+
+    import scperteval as sp
+
+    def undefined(gt, candidate, ctx):
+        return MetricOutcome(float("nan"), "constant_ground_truth")
+
+    protocol = Protocol("undefined_score", undefined, representation="centroid")
+    prepared = sp.prepare(dataset_adata, [protocol], subsample=400, seed=0, min_cells=10, workers=1)
+    pred = predictions_factory(dataset_adata, kind="degraded")
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", RuntimeWarning)
+        res = sp.score(prepared, protocol, pred)
+    assert np.isnan(res.aggregate["mean"]) and np.isnan(res.aggregate["median"])
+    assert set(res.per_perturbation["undefined_reason"]) == {"constant_ground_truth"}
 
 
 def test_drf_records_beyond_perfect_reason():

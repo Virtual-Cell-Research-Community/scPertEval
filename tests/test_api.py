@@ -287,11 +287,18 @@ def test_concrete_protocol_objects_are_supported(dataset_adata, predictions_fact
 
 def test_concrete_protocol_cannot_shadow_curated_name(dataset_adata):
     from scperteval.protocols import metrics
+    from scperteval.protocols.table import PROTOCOLS
     from scperteval.types import Protocol
 
     misleading = Protocol("mse", metrics.mae, representation="centroid", better="lower", perfect=0.0)
     with pytest.raises(ValueError, match="conflicts with a curated protocol"):
         prep(dataset_adata, misleading)
+    # Passing the exact curated Protocol object itself is allowed.
+    prepared = prep(dataset_adata, PROTOCOLS["mse"])
+    assert sp.calibrate(prepared, PROTOCOLS["mse"]).per_perturbation["protocol"].unique().tolist() == ["mse"]
+    # Unresolved parameterised templates are rejected.
+    with pytest.raises(ValueError, match="still parameterised"):
+        prep(dataset_adata, PROTOCOLS["mse_top_k"])
 
 
 def test_concrete_protocol_name_collisions_are_rejected(dataset_adata):
@@ -328,6 +335,25 @@ def test_truth_availability_supports_truth_source_and_dataset_scope(dataset_adat
         assert availability["self_score"].eq(0.0).all()
     with pytest.raises(ValueError, match="unknown truth source"):
         sp.truth_availability(prepared, "rank", truth="missing")
+
+
+def test_truth_availability_reports_undefined_perturbations(dataset_adata):
+    from scperteval.types import MetricOutcome, Protocol
+
+    def sometimes_undefined(gt, pred, ctx):
+        if ctx.current_pert == "pertA":
+            return MetricOutcome(float("nan"), "constant_ground_truth")
+        return 1.0
+
+    proto = Protocol("partial_defined", sometimes_undefined, representation="centroid")
+    prepared = prep(dataset_adata, [proto])
+    avail = sp.truth_availability(prepared, [proto]).set_index("perturbation")
+    assert bool(avail.loc["pertA", "ground_truth_defined"]) is False
+    assert avail.loc["pertA", "undefined_reason"] == "constant_ground_truth"
+    assert np.isnan(avail.loc["pertA", "self_score"])
+    assert bool(avail.loc["pertB", "ground_truth_defined"]) is True
+    assert pd.isna(avail.loc["pertB", "undefined_reason"])
+    assert avail.loc["pertB", "self_score"] == 1.0
 
 
 def test_out_dir_no_collision_across_protocols(dataset_adata, tmp_path):

@@ -160,3 +160,15 @@ def test_cosine_handles_constant_and_zero_vectors():
     # Only the zero vector has undefined cosine similarity
     assert np.isnan(M.cosine(zeros, varying, None))
     assert M.cosine(varying, zeros, None) == 0.0
+
+
+def test_scalar_metrics_on_non_identical_profiles():
+    assert M.mae(np.array([1.0, 2.0, 3.0]), np.array([2.0, 4.0, 6.0]), None) == pytest.approx(2.0)
+    assert M.spearman(np.array([1.0, 2.0, 3.0, 4.0]), np.array([10.0, 20.0, 40.0, 30.0]), None) == pytest.approx(0.8)
+    assert M.cosine(np.array([1.0, 0.0]), np.array([0.0, 1.0]), None) == pytest.approx(0.0)
+    assert M.cosine(np.array([1.0, 0.0]), np.array([-1.0, 0.0]), None) == pytest.approx(-1.0)
+    gt = np.array([1.0, 2.0, 3.0, 4.0])
+    assert M.squared_pearson(gt, -gt, None) == pytest.approx(1.0)
+    gt_r2 = np.array([2.0, 4.0, 6.0, 8.0])
+    assert M.clipped_r2(gt_r2, 3 * gt_r2 - 10, None) == pytest.approx(0.0)  # raw r2 is -3.0
+    assert M.explained_variance(gt, gt + 10.0, None) == pytest.approx(1.0)  # invariant to constant shift

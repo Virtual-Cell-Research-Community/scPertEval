@@ -13,6 +13,7 @@
     Protocol
     Calibrator
     PerturbationDEResult
+    MetricOutcome
     Param
 ```
 

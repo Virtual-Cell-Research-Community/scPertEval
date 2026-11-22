@@ -26,7 +26,7 @@ from .context import CacheStore, Context
 from .dataset import Dataset
 from .predictions import PredictionSet
 from .protocols.resolve import resolve_protocol_inputs
-from .runner import compute_de, evaluate_sources, resolve_de_perturbations, run_all
+from .runner import _evaluate_protocol_raw, compute_de, resolve_de_perturbations, run_all
 from .sources import SOURCES
 from .types import Protocol, RunConfig
 
@@ -534,7 +534,7 @@ def truth_availability(
     ctx.warm(resolved)
     rows = []
     for protocol in resolved:
-        perts, outcomes = evaluate_sources(protocol, ctx, {"truth": ctx.cfg.truth})
+        perts, outcomes = _evaluate_protocol_raw(protocol, ctx, {"truth": ctx.cfg.truth})
         for pert, raw in zip(perts, outcomes):
             outcome = raw["truth"]
             rows.append(

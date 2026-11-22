@@ -81,9 +81,10 @@ res.aggregate  # {"mean": …, "median": …} — the DRF summary for this proto
 res.per_perturbation  # DataFrame: raw control values + the calibrated DRF, one row per perturbation
 ```
 
-`calibrate` takes a **single** protocol spec — a name (`"pearson_ctrl"`) or a tunable one
-(`"mse_top_k=30"`); it does not accept `"all"` or a group. Pass `calibrator="bds"` for the Bound
-Discrimination Score instead of DRF.
+`calibrate` takes a **single** protocol — a curated name (`"pearson_ctrl"`), a tunable spec
+(`"mse_top_k=30"`), or a concrete `Protocol` object; it does not accept `"all"` or a group. Pass
+`calibrator="bds"` for the Bound Discrimination Score instead of DRF. Any perturbation whose raw or
+calibrated score is undefined is recorded as `NaN` with a machine-readable `undefined_reason`.
 
 ### Your own vectors as sources
 
