@@ -81,8 +81,18 @@ result.aggregate  # {"mean": …, "median": …} — calibrated DRF summary
 result.per_perturbation  # the per-perturbation detail table
 ```
 
-Sample datasets are available at
-`https://storage.googleapis.com/scperteval/processed/<dataset>_processed_complete.h5ad`.
+Sample datasets are hosted in the Requester Pays Google Cloud Storage bucket
+`gs://scperteval/processed/`. Downloads require a Google account and a billing-enabled Google
+Cloud project, which is billed for data transfer. With the
+[gcloud CLI](https://cloud.google.com/sdk/docs/install) installed:
+
+```bash
+gcloud auth login
+gcloud storage cp --billing-project=YOUR_PROJECT_ID gs://scperteval/processed/wessels23_processed_complete.h5ad data/wessels23.h5ad
+```
+
+See [Downloading](https://scperteval.readthedocs.io/en/latest/user-guide/datasets.html#downloading)
+for prerequisites and the remaining datasets.
 
 ---
 

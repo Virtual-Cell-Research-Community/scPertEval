@@ -15,16 +15,18 @@ scPertEval reads one preprocessed AnnData (`.h5ad`) per dataset. Only three thin
 Perturbations with at least `--min-cells` cells (default 30) are evaluated. Nothing else is
 needed — references, DE, and PCA are all recomputed in memory, so no `uns`/`obsm`/`layers` are read.
 
-**Sample datasets.** Seven preprocessed perturbation datasets live in a public, read-only GCS
-bucket and serve as a template for the format above:
+**Sample datasets.** Seven preprocessed perturbation datasets are hosted in a Requester Pays GCS
+bucket and serve as a template for the format above. Downloads require a Google account and a
+billing-enabled Google Cloud project, which is billed for data transfer. With the
+[gcloud CLI](https://cloud.google.com/sdk/docs/install) installed:
 
 ```bash
-gsutil ls gs://scperteval/processed/      # wessels23, replogle22{k562,rpe1}, nadig25{hepg2,jurkat}, arch1, kaden25rpe1
-gsutil cp gs://scperteval/processed/wessels23_processed_complete.h5ad .
+gcloud auth login
+gcloud storage ls --billing-project=YOUR_PROJECT_ID gs://scperteval/processed/      # wessels23, replogle22{k562,rpe1}, nadig25{hepg2,jurkat}, arch1, kaden25rpe1
+gcloud storage cp --billing-project=YOUR_PROJECT_ID gs://scperteval/processed/wessels23_processed_complete.h5ad .
 ```
 
-No gcloud account is needed — each file is also reachable over plain HTTPS at
-`https://storage.googleapis.com/scperteval/processed/<dataset>_processed_complete.h5ad`.
+See [Downloading](datasets.md#downloading) for prerequisites and additional download commands.
 
 ## Run it
 
