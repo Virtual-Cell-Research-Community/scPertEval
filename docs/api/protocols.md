@@ -31,12 +31,23 @@ core computation: it receives two arrays (or `PerturbationDEResult` objects) and
     :toctree: ../generated
 
     pearson
+    spearman
+    cosine
+    squared_pearson
+    r2
+    clipped_r2
+    explained_variance
     mse
+    mae
+    l2
     weighted_mse
+    weighted_pearson
+    weighted_r2
     energy_distance
     unbiased_mmd_median
     sinkhorn_w2
     rank_retrieval
+    nir
     de_auprc
     de_auroc
     de_overlap

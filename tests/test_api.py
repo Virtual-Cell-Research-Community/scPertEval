@@ -34,6 +34,7 @@ def test_public_surface():
         "de",
         "prepare",
         "score",
+        "truth_availability",
     }
     for gone in ("differential_expression", "available_protocols", "DEResults", "DEMethodResult"):
         assert not hasattr(sp, gone)
@@ -269,6 +270,90 @@ def test_calibrate_validates_de_method(dataset_adata):
 def test_protocol_must_be_a_string(dataset_adata):
     with pytest.raises(TypeError, match="protocol must be"):
         sp.calibrate(prep(dataset_adata, "mse"), ["pearson", "mse"])
+
+
+def test_concrete_protocol_objects_are_supported(dataset_adata, predictions_factory):
+    from scperteval.protocols import metrics
+    from scperteval.types import Protocol
+
+    protocol = Protocol("external_mae", metrics.mae, representation="centroid", better="lower", perfect=0.0)
+    prepared = prep(dataset_adata, protocol)
+    cal = sp.calibrate(prepared, protocol)
+    assert cal.per_perturbation["protocol"].unique().tolist() == ["external_mae"]
+    pred = predictions_factory(dataset_adata, kind="degraded")
+    scored = sp.score(prepared, protocol, pred)
+    assert scored.per_perturbation["protocol"].unique().tolist() == ["external_mae"]
+
+
+def test_concrete_protocol_cannot_shadow_curated_name(dataset_adata):
+    from scperteval.protocols import metrics
+    from scperteval.protocols.table import PROTOCOLS
+    from scperteval.types import Protocol
+
+    misleading = Protocol("mse", metrics.mae, representation="centroid", better="lower", perfect=0.0)
+    with pytest.raises(ValueError, match="conflicts with a curated protocol"):
+        prep(dataset_adata, misleading)
+    # Passing the exact curated Protocol object itself is allowed.
+    prepared = prep(dataset_adata, PROTOCOLS["mse"])
+    assert sp.calibrate(prepared, PROTOCOLS["mse"]).per_perturbation["protocol"].unique().tolist() == ["mse"]
+    # Unresolved parameterised templates are rejected.
+    with pytest.raises(ValueError, match="still parameterised"):
+        prep(dataset_adata, PROTOCOLS["mse_top_k"])
+
+
+def test_concrete_protocol_name_collisions_are_rejected(dataset_adata):
+    from scperteval.protocols import metrics
+    from scperteval.types import Protocol
+
+    left = Protocol("same", metrics.mse, representation="centroid")
+    right = Protocol("same", metrics.pearson, representation="centroid")
+    with pytest.raises(ValueError, match="two different concrete protocols"):
+        prep(dataset_adata, [left, right])
+
+
+def test_truth_availability_self_evaluates_without_predictions(dataset_adata):
+    from scperteval.protocols import metrics
+    from scperteval.types import Protocol
+
+    protocols = [
+        Protocol("external_mse", metrics.mse, representation="centroid", better="lower", perfect=0.0),
+        Protocol("external_pearson", metrics.pearson, representation="centroid"),
+    ]
+    prepared = prep(dataset_adata, protocols)
+    availability = sp.truth_availability(prepared, protocols)
+    assert len(availability) == 8
+    assert availability["ground_truth_defined"].all()
+    assert set(availability["protocol"]) == {"external_mse", "external_pearson"}
+
+
+def test_truth_availability_supports_truth_source_and_dataset_scope(dataset_adata):
+    prepared = prep(dataset_adata, "rank")
+    for truth in ("gt_all_cells", "gt_half"):
+        availability = sp.truth_availability(prepared, "rank", truth=truth)
+        assert len(availability) == 4
+        assert availability["ground_truth_defined"].all()
+        assert availability["self_score"].eq(0.0).all()
+    with pytest.raises(ValueError, match="unknown truth source"):
+        sp.truth_availability(prepared, "rank", truth="missing")
+
+
+def test_truth_availability_reports_undefined_perturbations(dataset_adata):
+    from scperteval.types import MetricOutcome, Protocol
+
+    def sometimes_undefined(gt, pred, ctx):
+        if ctx.current_pert == "pertA":
+            return MetricOutcome(float("nan"), "constant_ground_truth")
+        return 1.0
+
+    proto = Protocol("partial_defined", sometimes_undefined, representation="centroid")
+    prepared = prep(dataset_adata, [proto])
+    avail = sp.truth_availability(prepared, [proto]).set_index("perturbation")
+    assert bool(avail.loc["pertA", "ground_truth_defined"]) is False
+    assert avail.loc["pertA", "undefined_reason"] == "constant_ground_truth"
+    assert np.isnan(avail.loc["pertA", "self_score"])
+    assert bool(avail.loc["pertB", "ground_truth_defined"]) is True
+    assert pd.isna(avail.loc["pertB", "undefined_reason"])
+    assert avail.loc["pertB", "self_score"] == 1.0
 
 
 def test_out_dir_no_collision_across_protocols(dataset_adata, tmp_path):

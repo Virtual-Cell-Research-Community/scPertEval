@@ -8,6 +8,20 @@
   `scperteval de` (`--target`, `--reference`, `--perturbations-file`), validating against
   cell-providing `SOURCES` and recording `target`, `reference`, `subsample`, and `seed` as HDF5
   root attributes (based on #38 by @psl-schaefer).
+- Concrete `Protocol` objects accepted directly in `prepare()`, `calibrate()`, `score()`, and
+  `truth_availability()` without registering them in the curated CLI catalog (based on #39 by
+  @psl-schaefer).
+- `truth_availability()` for auditing ground-truth-defined `(protocol, perturbation)` units before
+  loading predictions (with configurable `truth="gt_all_cells"`).
+- `MetricOutcome` and an `undefined_reason` column in per-perturbation tables.
+- Six centroid scalar metrics in `scperteval.protocols.metrics`: `mae`, `spearman`, `cosine`,
+  `squared_pearson`, `explained_variance`, and `clipped_r2`.
+
+### Fixed
+
+- Undefined (`NaN`) raw metric values now propagate through DRF and BDS as `NaN` with an explicit
+  `undefined_reason` instead of being counted as BDS losses (reported and fixed in #39 by
+  @psl-schaefer).
 
 ## 0.2.0
 

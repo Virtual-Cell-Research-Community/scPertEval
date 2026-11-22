@@ -22,8 +22,11 @@ Two protocol fields control what the metric receives:
 
 from __future__ import annotations
 
+from typing import Any
+
 import numpy as np
-from sklearn.metrics import average_precision_score, r2_score, roc_auc_score
+from scipy.stats import spearmanr
+from sklearn.metrics import average_precision_score, explained_variance_score, r2_score, roc_auc_score
 
 from ..blocks.de import mejia_weights
 
@@ -135,6 +138,72 @@ def pearson(gt, prediction, ctx):
 
 
 @_doc(params=_CENTROID)
+def spearman(gt, prediction, ctx):
+    """Spearman rank correlation between pseudobulk profiles.
+
+    Parameters
+    ----------
+    %(params)s
+
+    Returns
+    -------
+    float
+        Spearman ρ in [-1, 1]; 1 is perfect. Returns ``nan`` for constant ground truth
+        and ``0.0`` for a constant prediction against varying ground truth.
+    """
+    if np.ptp(gt) == 0:
+        return float("nan")
+    if np.ptp(prediction) == 0:
+        return 0.0
+    result: Any = spearmanr(gt, prediction)
+    return float(result.statistic)
+
+
+@_doc(params=_CENTROID)
+def cosine(gt, prediction, ctx):
+    """Cosine similarity between pseudobulk profiles.
+
+    Parameters
+    ----------
+    %(params)s
+
+    Returns
+    -------
+    float
+        Cosine similarity in [-1, 1]; 1 is perfect. Returns ``nan`` for a zero
+        ground-truth vector and ``0.0`` for a zero prediction against non-zero ground truth.
+    """
+    gt_norm = float(np.linalg.norm(gt))
+    if gt_norm == 0.0:
+        return float("nan")
+    pred_norm = float(np.linalg.norm(prediction))
+    if pred_norm == 0.0:
+        return 0.0
+    return float(np.dot(gt, prediction) / (gt_norm * pred_norm))
+
+
+@_doc(params=_CENTROID)
+def squared_pearson(gt, prediction, ctx):
+    """Squared Pearson correlation between pseudobulk profiles.
+
+    Parameters
+    ----------
+    %(params)s
+
+    Returns
+    -------
+    float
+        Squared Pearson r² in [0, 1]; 1 is perfect.
+    """
+    if np.ptp(gt) == 0:
+        return float("nan")
+    if np.ptp(prediction) == 0:
+        return 0.0
+    value = pearson(gt, prediction, ctx)
+    return value * value
+
+
+@_doc(params=_CENTROID)
 def r2(gt, prediction, ctx):
     r"""Coefficient of determination between pseudobulk profiles.
 
@@ -164,6 +233,38 @@ def r2(gt, prediction, ctx):
 
 
 @_doc(params=_CENTROID)
+def clipped_r2(gt, prediction, ctx):
+    """Coefficient of determination clipped to ``[0, 1]``.
+
+    Parameters
+    ----------
+    %(params)s
+
+    Returns
+    -------
+    float
+        Clipped R² in [0, 1]; 1 is perfect.
+    """
+    return float(np.clip(r2(gt, prediction, ctx), 0.0, 1.0))
+
+
+@_doc(params=_CENTROID)
+def explained_variance(gt, prediction, ctx):
+    """Explained-variance regression score between pseudobulk profiles.
+
+    Parameters
+    ----------
+    %(params)s
+
+    Returns
+    -------
+    float
+        Explained variance ≤ 1; 1 is perfect.
+    """
+    return float(explained_variance_score(gt, prediction))
+
+
+@_doc(params=_CENTROID)
 def mse(gt, prediction, ctx):
     r"""Mean squared error between pseudobulk profiles.
 
@@ -181,6 +282,22 @@ def mse(gt, prediction, ctx):
         Non-negative MSE; 0 is perfect.
     """
     return float(np.mean((gt - prediction) ** 2))
+
+
+@_doc(params=_CENTROID)
+def mae(gt, prediction, ctx):
+    """Mean absolute error between pseudobulk profiles.
+
+    Parameters
+    ----------
+    %(params)s
+
+    Returns
+    -------
+    float
+        Non-negative MAE; 0 is perfect.
+    """
+    return float(np.mean(np.abs(gt - prediction)))
 
 
 @_doc(params=_CENTROID)

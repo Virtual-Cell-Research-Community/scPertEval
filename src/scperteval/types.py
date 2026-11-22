@@ -63,6 +63,14 @@ class PerturbationDEResult:
 
 
 @dataclass(frozen=True)
+class MetricOutcome:
+    """A scalar metric value with an optional machine-readable undefined reason."""
+
+    value: float
+    undefined_reason: str | None = None
+
+
+@dataclass(frozen=True)
 class Param:
     """A protocol's tunable knob: how a CLI value is cast, defaulted, and applied.
 
@@ -173,7 +181,8 @@ class Calibrator:
     name: str
     #: Calibrator inputs (candidate names) it needs — e.g. ``("positive", "negative")``.
     requires: tuple[str, ...]
-    #: ``(raws: dict, protocol: Protocol) -> float`` — combines raw control values into one per-perturbation calibrated score.
+    #: ``(raws: dict, protocol: Protocol) -> float | MetricOutcome`` — combines raw control values
+    #: into one per-perturbation score; structured outcomes preserve undefined reasons.
     per_pert: Callable
     #: ``(values: numpy.ndarray) -> dict`` — reduces per-perturbation scores into summary statistics (e.g. ``{"mean": …, "median": …}``).
     aggregate: Callable
