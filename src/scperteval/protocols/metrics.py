@@ -12,7 +12,7 @@ Two protocol fields control what the metric receives:
 
 - ``"centroid"`` — 1-D pseudobulk vector, shape ``(G,)``.
 - ``"population"`` — cell matrix, shape ``(n, G)``.
-- ``"de"`` — :class:`~scperteval.types.PerturbationDEResult` for ground truth; \|statistic\| ranking for predictions.
+- ``"de"`` — :class:`~scperteval.types.PerturbationDEResult` for both ground truth and candidate.
 
 **scope** — how many perturbations the metric sees at once:
 
@@ -675,21 +675,32 @@ def _de_check_finite(gt, prediction) -> MetricOutcome | None:
     return None
 
 
-def _de_scores(result, rank_by: str = "absolute_effect") -> np.ndarray:
-    """Continuous per-gene scores whose descending order is the DE ranking."""
+def _de_scores(result, rank_by: str = "significance") -> np.ndarray:
+    """Continuous per-gene scores whose descending order is the DE ranking.
+
+    For ``rank_by="significance"``, returns tie-preserving dense ranks over
+    ``(pvalue_adj ASC, |statistic| DESC)`` so identical ``(pvalue_adj, |statistic|)``
+    pairs stay tied (keeping ROC/PR curves invariant to gene column order).
+    """
     if rank_by not in _DE_RANKINGS:
         raise ValueError(f"unknown rank_by {rank_by!r}; expected {list(_DE_RANKINGS)}")
     if not hasattr(result, "statistic"):
         return np.asarray(result, dtype=float)
-    statistic = np.asarray(result.statistic, dtype=float)
+    abs_stat = np.abs(np.asarray(result.statistic, dtype=float))
     if rank_by == "significance":
+        if abs_stat.size == 0:
+            return abs_stat
         padj = np.asarray(result.pvalue_adj, dtype=float)
-        idx = np.arange(len(statistic))
-        order = np.lexsort((idx, -np.abs(statistic), padj))
-        scores = np.empty(len(statistic), dtype=float)
-        scores[order] = np.arange(len(statistic), 0, -1, dtype=float)
+        order = np.lexsort((-abs_stat, padj))
+        padj_s = padj[order]
+        abs_s = abs_stat[order]
+        changed = np.empty(order.size, dtype=bool)
+        changed[0] = False
+        changed[1:] = (padj_s[1:] != padj_s[:-1]) | (abs_s[1:] != abs_s[:-1])
+        scores = np.empty(order.size, dtype=float)
+        scores[order] = -np.cumsum(changed).astype(float)
         return scores
-    return np.abs(statistic)
+    return abs_stat
 
 
 def _de_top_mask(scores: np.ndarray, k: int) -> np.ndarray:
@@ -758,7 +769,7 @@ def _binary_f1(truth: np.ndarray, prediction: np.ndarray, *, positive: bool = Tr
 @_metric("de", "higher", 1.0)
 @_doc(params=_DE)
 def de_auprc(
-    gt, prediction, ctx, *, padj: float | None = 0.05, top_k: int | None = None, rank_by: str = "absolute_effect"
+    gt, prediction, ctx, *, padj: float | None = 0.05, top_k: int | None = None, rank_by: str = "significance"
 ):
     """Area under the precision-recall curve for DEG recovery.
 
@@ -769,8 +780,8 @@ def de_auprc(
         Adjusted p-value cutoff defining ground-truth positive DEGs (default 0.05).
     top_k : int or None, optional
         Cap the ground-truth positive set to the top ``top_k`` genes.
-    rank_by : {"absolute_effect", "significance"}, optional
-        Ranking criterion for prediction scores (default ``"absolute_effect"``).
+    rank_by : {"significance", "absolute_effect"}, optional
+        Ranking criterion for prediction scores and optional ``top_k`` cap (default ``"significance"``).
 
     Returns
     -------
@@ -793,7 +804,7 @@ def de_auprc(
 @_metric("de", "higher", 1.0)
 @_doc(params=_DE)
 def de_auroc(
-    gt, prediction, ctx, *, padj: float | None = 0.05, top_k: int | None = None, rank_by: str = "absolute_effect"
+    gt, prediction, ctx, *, padj: float | None = 0.05, top_k: int | None = None, rank_by: str = "significance"
 ):
     """Area under the ROC curve for DEG recovery.
 
@@ -804,8 +815,8 @@ def de_auroc(
         Adjusted p-value cutoff defining ground-truth positive DEGs (default 0.05).
     top_k : int or None, optional
         Cap the ground-truth positive set to the top ``top_k`` genes.
-    rank_by : {"absolute_effect", "significance"}, optional
-        Ranking criterion for prediction scores (default ``"absolute_effect"``).
+    rank_by : {"significance", "absolute_effect"}, optional
+        Ranking criterion for prediction scores and optional ``top_k`` cap (default ``"significance"``).
 
     Returns
     -------
@@ -825,7 +836,7 @@ def de_auroc(
 
 @_metric("de", "higher", 1.0)
 @_doc(params=_DE)
-def de_overlap(gt, prediction, ctx, k: int = 50, *, rank_by: str = "absolute_effect"):
+def de_overlap(gt, prediction, ctx, k: int = 50, *, rank_by: str = "significance"):
     r"""Top-k overlap between ground-truth and predicted DE gene rankings.
 
     .. math::
@@ -838,8 +849,8 @@ def de_overlap(gt, prediction, ctx, k: int = 50, *, rank_by: str = "absolute_eff
     %(params)s
     k : int
         Number of top genes to intersect (default 50).
-    rank_by : {"absolute_effect", "significance"}, optional
-        Ranking criterion (default ``"absolute_effect"``).
+    rank_by : {"significance", "absolute_effect"}, optional
+        Ranking criterion (default ``"significance"``).
 
     Returns
     -------
