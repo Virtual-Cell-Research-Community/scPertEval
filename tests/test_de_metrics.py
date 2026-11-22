@@ -90,6 +90,64 @@ def test_de_direction_concordance_uses_signed_statistics():
     assert M.de_direction_concordance(truth, partial_match, None) == pytest.approx(0.5)
 
 
+def test_de_set_and_ranking_metrics_on_partial_match():
+    # Truth DEGs: {g0, g1}; Predicted DEGs: {g0, g2}.
+    # TP=1, FP=1, FN=1, TN=1 -> precision=0.5, recall=0.5, f1=0.5, macro_f1=0.5, jaccard=1/3.
+    truth = _de([5.0, -4.0, 0.2, -0.1], [0.001, 0.01, 0.8, 0.9])
+    pred = _de([5.0, 0.3, -4.0, -0.1], [0.001, 0.6, 0.01, 0.9])
+    assert M.de_precision(truth, pred, None) == pytest.approx(0.5)
+    assert M.de_recall(truth, pred, None) == pytest.approx(0.5)
+    assert M.de_f1(truth, pred, None) == pytest.approx(0.5)
+    assert M.de_macro_f1(truth, pred, None) == pytest.approx(0.5)
+    assert M.de_jaccard(truth, pred, None) == pytest.approx(1.0 / 3.0)
+    assert M.de_overlap_at_truth_size(truth, pred, None) == pytest.approx(0.5)
+    # With top_k=1 ranked by significance, truth positive is {g0} and pred's top-1 is {g0} -> perfect.
+    assert M.de_auprc(truth, pred, None, top_k=1, rank_by="significance") == pytest.approx(1.0)
+    assert M.de_auroc(truth, pred, None, top_k=1, rank_by="significance") == pytest.approx(1.0)
+
+
+def test_force_include_and_exclude_target_preserve_biological_de_labels():
+    from scperteval.context import Context
+    from scperteval.dataset import Dataset
+    from scperteval.types import RunConfig
+
+    adata = make_dataset()
+    adata.var_names = ["pertA", "g1", "g2", "g3", *[f"g{i}" for i in range(4, 60)]]
+    cfg = RunConfig(dataset="-", protocols=[], subsample=400, seed=0, min_cells=10, workers=1, truth="gt_all_cells")
+    ctx = Context(Dataset(adata, cfg), cfg)
+
+    # Target gene (index 0 = "pertA") is NOT DE (padj=0.8); pick one non-target HVG as the true DEG.
+    hvg5 = spaces.hvg(5).select(ctx, None)
+    deg_idx = next(int(i) for i in hvg5 if i != 0)
+    t_stat = np.zeros(60, dtype=float)
+    t_padj = np.full(60, 0.9, dtype=float)
+    t_stat[0], t_padj[0] = 8.0, 0.8
+    t_stat[deg_idx], t_padj[deg_idx] = 4.0, 0.001
+    p_stat = t_stat.copy()
+    p_padj = t_padj.copy()
+    p_stat[0], p_padj[0] = -8.0, 0.001  # opposite sign on non-DE target!
+
+    truth_de = _de(t_stat, t_padj)
+    pred_de = _de(p_stat, p_padj)
+    ctx.de = lambda pert, source, reference="control": truth_de if source == "gt_all_cells" else pred_de  # type: ignore[method-assign]
+
+    # Force-including pertA in the universe must NOT make it a positive DEG; only deg_idx is scored -> 1.0.
+    include_proto = Protocol(
+        "de_dir_inc", M.de_direction_concordance, "de", space=spaces.hvg(5) | spaces.own_target(), reference="control"
+    )
+    gt_view = ctx.view("pertA", "gt_all_cells", include_proto)
+    pred_view = ctx.view("pertA", "prediction", include_proto)
+    assert M.de_direction_concordance(gt_view, pred_view, ctx) == pytest.approx(1.0)
+
+    # Excluding pertA removes it from the DE universe cleanly (59 genes remain, still 1 true DEG).
+    exclude_proto = Protocol(
+        "de_auroc_exc", M.de_auroc, "de", space=spaces.full() - spaces.own_target(), reference="control"
+    )
+    gt_exc = ctx.view("pertA", "gt_all_cells", exclude_proto)
+    assert gt_exc.statistic.size == 59
+    assert int((gt_exc.pvalue_adj < 0.05).sum()) == 1
+
+
 def test_de_protocol_applies_subset_space_to_gene_universe(predictions_factory):
     adata = make_dataset()
     adata.var_names = ["pertA", "pertB", "pertC", "pertD", *[f"g{i}" for i in range(56)]]

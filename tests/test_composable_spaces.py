@@ -27,7 +27,7 @@ def test_composable_spaces_do_not_mutate_global_registry():
     before_catalog = {s.name for s in SPACES.catalog()}
 
     deg = spaces.degs(padj=0.05, top_k=5, rank_by="significance", reference="control") - spaces.own_target()
-    hvg_pca = spaces.hvg(10) >> spaces.pca(4)
+    hvg_pca = spaces.pca(4).on(spaces.hvg(10))
 
     assert deg.cache_key != hvg_pca.cache_key
     assert set(SPACES.names()) == before_names
@@ -47,6 +47,28 @@ def test_degs_space_is_deterministic_and_preserves_distinct_float_keys():
     right = spaces.degs(padj=0.05000001, rank_by="significance")
     assert left != right
     assert left.cache_key != right.cache_key
+
+
+def test_degs_supports_absolute_effect_ranking_and_unthresholded_top_k():
+    ctx = _context()
+    # Stub DE with distinct orderings under significance vs absolute effect.
+    fake_de = type(
+        "DE",
+        (),
+        {
+            "statistic": np.array([2.0, 9.0, 5.0, 0.5] + [0.0] * 56, dtype=float),
+            "pvalue_adj": np.array([0.001, 0.04, 0.01, 0.8] + [0.9] * 56, dtype=float),
+        },
+    )()
+    ctx.de = lambda pert, source, reference="all_perturbed": fake_de  # type: ignore[method-assign]
+
+    by_sig = spaces.degs(padj=0.05, top_k=2, rank_by="significance").select(ctx, "pertA")
+    by_eff = spaces.degs(padj=0.05, top_k=2, rank_by="absolute_effect").select(ctx, "pertA")
+    no_gate = spaces.degs(padj=None, top_k=4, rank_by="absolute_effect").select(ctx, "pertA")
+
+    assert by_sig.tolist() == [0, 2]
+    assert by_eff.tolist() == [1, 2]
+    assert no_gate.tolist() == [1, 2, 0, 3]
 
 
 def test_own_target_composes_with_union_and_difference():
@@ -104,25 +126,31 @@ def test_target_key_resolves_namespaced_perturbations():
     assert avail.loc["dataset-a::pertC", "undefined_reason"] == "target_gene_not_measured"
 
 
-def test_subset_piped_to_pca_fits_on_subset_and_warms():
-    ctx = _context()
-    hvg10 = spaces.hvg(10)
-    via_pipe = hvg10 >> spaces.pca(4)
-    via_kw = spaces.pca(4, on=hvg10)
-    assert via_pipe == via_kw
+def test_missing_target_key_raises_clean_error(dataset_adata):
+    with pytest.raises(ValueError, match="target_key 'nope' not found"):
+        sp.prepare(dataset_adata, [], subsample=400, seed=0, min_cells=10, workers=1, target_key="nope")
 
-    proto = Protocol("ed_hvg_pca", metrics.energy_distance, "population", space=via_pipe, better="lower", perfect=0.0)
+
+def test_transform_on_subset_fits_on_subset_and_warms():
+    ctx = _context()
+    hvg_pca = spaces.pca(4).on(spaces.hvg(10))
+    full_pca = spaces.pca(4)
+
+    proto = Protocol("ed_hvg_pca", metrics.energy_distance, "population", space=hvg_pca, better="lower", perfect=0.0)
     ctx.warm([proto])
     assert any(k[0] == "subset_pca" for k in ctx._store.memo)
-    assert ("reference_projection", (via_pipe.cache_key,)) in ctx._store.memo
+    assert ("reference_projection", (hvg_pca.cache_key,)) in ctx._store.memo
 
-    projected = via_pipe.apply(ctx.ds.cells("pertA"), ctx, "pertA")
+    cells = ctx.ds.cells("pertA")
+    projected = hvg_pca.apply(cells, ctx, "pertA")
+    projected_full = full_pca.apply(cells, ctx, "pertA")
     assert projected.shape == (120, 4)
+    assert not np.allclose(projected, projected_full)
 
 
-def test_subset_piped_to_pca_rejects_per_perturbation_subset():
+def test_transform_on_rejects_per_perturbation_subset():
     with pytest.raises(ValueError, match="dataset-wide subset"):
-        _ = spaces.degs(padj=0.05) >> spaces.pca(5)
+        spaces.pca(5).on(spaces.degs(padj=0.05))
 
 
 def test_empty_space_records_undefined_outcome_in_runner(dataset_adata):

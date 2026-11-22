@@ -298,7 +298,7 @@ def prepare(
         callers compose protocols without extending the curated CLI catalog. Pass ``"all"`` for the
         whole catalog, or ``[]`` if you only need :func:`de` / no spaces. A verb may still run a
         protocol not declared here; its space is then computed on first use.
-    subsample, seed, min_cells, perturbation_key, control_label, workers, name
+    subsample, seed, min_cells, perturbation_key, control_label, target_key, workers, name
         Dataset/run knobs fixed for the handle; see :class:`~scperteval.types.RunConfig`.
     sources : dict[str, numpy.ndarray], optional
         Runtime **user sources** registered on this handle (never on the global registry, so they

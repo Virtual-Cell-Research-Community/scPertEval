@@ -63,7 +63,7 @@ from scperteval.types import Protocol
 deg50 = spaces.degs(padj=0.05, top_k=50, rank_by="significance", reference="control") - spaces.own_target()
 proto = Protocol("pearson_deg50_no_target", metrics.pearson, "centroid", space=deg50)
 
-hvg_pca = spaces.hvg(2000) >> spaces.pca(50)
+hvg_pca = spaces.pca(50).on(spaces.hvg(2000))
 edist = Protocol("edist_hvg_pca", metrics.energy_distance, "population", space=hvg_pca, better="lower", perfect=0.0)
 
 de_f1 = Protocol(
@@ -75,8 +75,8 @@ de_f1 = Protocol(
 )
 ```
 
-Subset spaces compose with `|` (union), `&` (intersection), `-` (difference), and pipe into
-transforms with `>>` (or `spaces.pca(50, on=subset)`). If perturbation labels are not gene
+Subset spaces compose with `|` (union), `&` (intersection), and `-` (difference); transforms
+restrict to a dataset-wide subset via `.on(subset)` (e.g. `spaces.pca(50).on(spaces.hvg(2000))`). If perturbation labels are not gene
 symbols (e.g., namespaced labels), pass `target_key="target_gene"` to `prepare()`. Use
 {func}`~scperteval.api.truth_availability` to audit which `(protocol, perturbation)` units are
 ground-truth-defined before loading predictions (default `truth="gt_all_cells"`; pass

@@ -17,9 +17,9 @@
 - Six centroid scalar metrics in `scperteval.protocols.metrics`: `mae`, `spearman`, `cosine`,
   `squared_pearson`, `explained_variance`, and `clipped_r2`.
 - First-class composable `FeatureSpace` objects in `scperteval.blocks.spaces` (`full()`, `hvg()`,
-  `heg()`, `top()`, multi-knob `degs()`, `perturbed_genes()`, `own_target()`, `pca(on=...)`),
-  supporting `|` / `&` / `-` set composition and `>>` subset-to-transform piping without mutating
-  the global `SPACES` registry (building on #39 by @psl-schaefer).
+  `heg()`, `top()`, multi-knob `degs()`, `perturbed_genes()`, `own_target()`, `pca()`), supporting
+  `|` / `&` / `-` set composition and `transform.on(subset)` without mutating the global `SPACES`
+  registry (building on #39 by @psl-schaefer).
 - `target_key` option on `prepare()` / `RunConfig` for resolving target genes from an `adata.obs`
   column.
 - Pure DE-recovery metrics in `scperteval.protocols.metrics`: `de_f1`, `de_macro_f1`, `de_jaccard`,

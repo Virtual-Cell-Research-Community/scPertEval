@@ -138,7 +138,7 @@ class Space:
     #: Optional keyword-only parameters and their defaults, configurable from Python.
     kw_defaults: tuple[tuple[str, Any], ...] = ()
     #: Optional ``(X, ctx, subset, **params) -> ndarray`` hook for transforms that fit natively on a
-    #: dataset-wide :class:`SubsetSpace` (e.g. ``hvg(2000) >> pca(50)``).
+    #: dataset-wide :class:`SubsetSpace` (e.g. ``pca(50).on(hvg(2000))``).
     subset_apply: Callable | None = None
     #: Optional ``(ctx, subset, **params) -> None`` warmup hook paired with ``subset_apply``.
     subset_precompute: Callable | None = None
@@ -180,7 +180,7 @@ class FeatureSpace:
 
 
 class SubsetSpace(FeatureSpace):
-    """A composable gene-subset space supporting ``|`` (union), ``&`` (intersection), ``-`` (difference), and ``>>`` (pipe to transform)."""
+    """A composable gene-subset space supporting ``|`` (union), ``&`` (intersection), and ``-`` (difference)."""
 
     @property
     def is_subset(self) -> bool:
@@ -219,19 +219,20 @@ class SubsetSpace(FeatureSpace):
             return NotImplemented
         return CombinedSubset(OPS.difference, self, other)
 
-    def __rshift__(self, other: TransformSpace) -> PipedTransform:
-        if not isinstance(other, TransformSpace):
-            return NotImplemented
-        return PipedTransform(self, other)
-
 
 class TransformSpace(FeatureSpace):
-    """A feature space that replaces the gene axis (e.g. PCA)."""
+    """A feature space that replaces the gene axis (e.g. PCA), optionally restricted via :meth:`on`."""
 
     @property
     def is_subset(self) -> bool:
         """Transforms replace the gene axis rather than subsetting it."""
         return False
+
+    def on(self, subset: SubsetSpace) -> PipedTransform:
+        """Apply (and, where supported, fit) this transform restricted to a dataset-wide ``subset``."""
+        if not isinstance(subset, SubsetSpace):
+            raise TypeError(f"on() expects a SubsetSpace, got {type(subset).__name__}")
+        return PipedTransform(subset, self)
 
 
 @dataclass(frozen=True)
@@ -332,7 +333,7 @@ class RuleTransform(TransformSpace):
 
 @dataclass(frozen=True)
 class PipedTransform(TransformSpace):
-    """A dataset-wide :class:`SubsetSpace` piped into a :class:`TransformSpace` (``subset >> transform``)."""
+    """A dataset-wide :class:`SubsetSpace` paired with a :class:`TransformSpace` (``transform.on(subset)``)."""
 
     subset: SubsetSpace
     transform: TransformSpace

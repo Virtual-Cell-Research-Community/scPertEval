@@ -51,4 +51,12 @@ core computation: it receives two arrays (or `PerturbationDEResult` objects) and
     de_auprc
     de_auroc
     de_overlap
+    de_overlap_at_truth_size
+    de_direction_concordance
+    de_spearman
+    de_recall
+    de_precision
+    de_f1
+    de_macro_f1
+    de_jaccard
 ```

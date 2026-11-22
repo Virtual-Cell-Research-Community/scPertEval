@@ -75,10 +75,9 @@ def own_target() -> SubsetSpace:
     return cast(SubsetSpace, SPACES.space("own_target"))
 
 
-def pca(k: int = 50, *, on: SubsetSpace | None = None) -> TransformSpace:
-    """Top ``k`` principal components, optionally fit on a dataset-wide ``on`` subset."""
-    base = cast(TransformSpace, SPACES.space("pca", k))
-    return (on >> base) if on is not None else base
+def pca(k: int = 50) -> TransformSpace:
+    """Top ``k`` principal components (call ``.on(subset)`` to fit on a dataset-wide gene subset)."""
+    return cast(TransformSpace, SPACES.space("pca", k))
 
 
 __all__ = [

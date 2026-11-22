@@ -611,7 +611,7 @@ def nir(gt, prediction, ctx):
     return 1.0 - rank_retrieval(gt, prediction, ctx, transpose=True)
 
 
-_DE_RANKINGS = ("effect", "absolute_effect", "significance")
+_DE_RANKINGS = ("absolute_effect", "significance")
 
 
 def _de_check_finite(gt, prediction) -> MetricOutcome | None:
@@ -630,7 +630,7 @@ def _de_check_finite(gt, prediction) -> MetricOutcome | None:
     return None
 
 
-def _de_scores(result, rank_by: str = "effect") -> np.ndarray:
+def _de_scores(result, rank_by: str = "absolute_effect") -> np.ndarray:
     """Continuous per-gene scores whose descending order is the DE ranking."""
     if rank_by not in _DE_RANKINGS:
         raise ValueError(f"unknown rank_by {rank_by!r}; expected {list(_DE_RANKINGS)}")
@@ -711,7 +711,9 @@ def _binary_f1(truth: np.ndarray, prediction: np.ndarray, *, positive: bool = Tr
 
 
 @_doc(params=_DE)
-def de_auprc(gt, prediction, ctx, *, padj: float | None = 0.05, top_k: int | None = None, rank_by: str = "effect"):
+def de_auprc(
+    gt, prediction, ctx, *, padj: float | None = 0.05, top_k: int | None = None, rank_by: str = "absolute_effect"
+):
     """Area under the precision-recall curve for DEG recovery.
 
     Parameters
@@ -721,8 +723,8 @@ def de_auprc(gt, prediction, ctx, *, padj: float | None = 0.05, top_k: int | Non
         Adjusted p-value cutoff defining ground-truth positive DEGs (default 0.05).
     top_k : int or None, optional
         Cap the ground-truth positive set to the top ``top_k`` genes.
-    rank_by : {"effect", "absolute_effect", "significance"}, optional
-        Ranking criterion for prediction scores (default ``"effect"``).
+    rank_by : {"absolute_effect", "significance"}, optional
+        Ranking criterion for prediction scores (default ``"absolute_effect"``).
 
     Returns
     -------
@@ -741,7 +743,9 @@ def de_auprc(gt, prediction, ctx, *, padj: float | None = 0.05, top_k: int | Non
 
 
 @_doc(params=_DE)
-def de_auroc(gt, prediction, ctx, *, padj: float | None = 0.05, top_k: int | None = None, rank_by: str = "effect"):
+def de_auroc(
+    gt, prediction, ctx, *, padj: float | None = 0.05, top_k: int | None = None, rank_by: str = "absolute_effect"
+):
     """Area under the ROC curve for DEG recovery.
 
     Parameters
@@ -751,8 +755,8 @@ def de_auroc(gt, prediction, ctx, *, padj: float | None = 0.05, top_k: int | Non
         Adjusted p-value cutoff defining ground-truth positive DEGs (default 0.05).
     top_k : int or None, optional
         Cap the ground-truth positive set to the top ``top_k`` genes.
-    rank_by : {"effect", "absolute_effect", "significance"}, optional
-        Ranking criterion for prediction scores (default ``"effect"``).
+    rank_by : {"absolute_effect", "significance"}, optional
+        Ranking criterion for prediction scores (default ``"absolute_effect"``).
 
     Returns
     -------
@@ -771,7 +775,7 @@ def de_auroc(gt, prediction, ctx, *, padj: float | None = 0.05, top_k: int | Non
 
 
 @_doc(params=_DE)
-def de_overlap(gt, prediction, ctx, k: int = 50, *, rank_by: str = "effect"):
+def de_overlap(gt, prediction, ctx, k: int = 50, *, rank_by: str = "absolute_effect"):
     r"""Top-k overlap between ground-truth and predicted DE gene rankings.
 
     .. math::
@@ -784,8 +788,8 @@ def de_overlap(gt, prediction, ctx, k: int = 50, *, rank_by: str = "effect"):
     %(params)s
     k : int
         Number of top genes to intersect (default 50).
-    rank_by : {"effect", "absolute_effect", "significance"}, optional
-        Ranking criterion (default ``"effect"``).
+    rank_by : {"absolute_effect", "significance"}, optional
+        Ranking criterion (default ``"absolute_effect"``).
 
     Returns
     -------
