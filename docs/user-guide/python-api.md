@@ -65,7 +65,9 @@ deg50 = sp.spaces.degs(padj=0.05, top_k=50, reference="control") - sp.spaces.own
 proto = sp.Protocol("pearson_deg50_no_target", sp.metrics.pearson, space=deg50)
 
 # Centered centroid on HVGs (calibrate() automatically uses control_mean as negative)
-pert_hvg = sp.Protocol("pearson_pert_hvg2k", sp.metrics.pearson, centering="all_perturbed_mean", space=sp.spaces.hvg(2000))
+pert_hvg = sp.Protocol(
+    "pearson_pert_hvg2k", sp.metrics.pearson, centering="all_perturbed_mean", space=sp.spaces.hvg(2000)
+)
 
 # Population distance on HVG-PCA (representation="population", better="lower", perfect=0.0 inferred)
 hvg_pca = sp.spaces.pca(50).on(sp.spaces.hvg(2000))
@@ -128,6 +130,7 @@ def relative_l1(gt, prediction, ctx):
     if denom == 0.0:
         return sp.MetricOutcome(float("nan"), "zero_ground_truth_norm")
     return float(np.sum(np.abs(gt - prediction)) / denom)
+
 
 custom = sp.Protocol("relative_l1", relative_l1, representation="centroid", better="lower", perfect=0.0)
 ```
