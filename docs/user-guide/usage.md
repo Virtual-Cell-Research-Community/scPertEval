@@ -123,7 +123,17 @@ tightly coupled with some evaluation protocols.
 
 ```bash
 scperteval de data/wessels23.h5ad --method MWU
+
+# All observed cells for each perturbation against a deterministic sample of controls
+scperteval de data/wessels23.h5ad --method MWU --target gt_all_cells --reference control
 ```
+
+`--target` and `--reference` accept any cell-providing source from `scperteval list sources`
+(defaults: `gt_half` and `all_perturbed`). Reference populations (`all_perturbed`, `control`) are
+capped by `--subsample` (default 8,192) using `--seed` (default 42). The HDF5 export records
+`target`, `reference`, `subsample`, and `seed` as root attributes. For pilots or sharded runs,
+`--perturbations-file selected.txt` restricts output to the listed perturbations while keeping the
+full dataset for constructing reference populations.
 
 ### Discover what's available
 

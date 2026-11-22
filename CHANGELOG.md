@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+### Added
+
+- Configurable `target`, `reference`, and `perturbations` options for `scperteval.de()` and
+  `scperteval de` (`--target`, `--reference`, `--perturbations-file`), validating against
+  cell-providing `SOURCES` and recording `target`, `reference`, `subsample`, and `seed` as HDF5
+  root attributes (based on #38 by @psl-schaefer).
+
 ## 0.2.0
 
 ### Added

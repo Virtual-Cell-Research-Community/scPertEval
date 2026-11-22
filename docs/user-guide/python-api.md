@@ -112,12 +112,15 @@ res.per_perturbation  # DataFrame with a `score` column per perturbation
 
 ## Differential expression
 
-{func}`~scperteval.api.de` computes per-gene differential expression (ground truth vs
-all-perturbed) for **one** method — the equivalent of
-{func}`scperteval de <scperteval.api.de>`:
+{func}`~scperteval.api.de` computes per-gene differential expression for **one** method — the
+equivalent of {func}`scperteval de <scperteval.api.de>` (defaulting to `target="gt_half"` vs
+`reference="all_perturbed"`):
 
 ```python
 d = sp.de(prep, "t-test")
+
+# All observed cells vs non-targeting controls, for a chosen subset of perturbations
+d_ctrl = sp.de(prep, "t-test", target="gt_all_cells", reference="control", perturbations=["pertA"])
 
 d.statistic  # DataFrame: perturbations × genes (the test statistic)
 d.pvalue_adj  # DataFrame: perturbations × genes (BH-adjusted p-values)
