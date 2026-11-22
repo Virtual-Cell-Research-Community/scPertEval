@@ -11,7 +11,7 @@ import anndata as ad
 import numpy as np
 from threadpoolctl import threadpool_limits
 
-from ...caching import DatasetScope, cached
+from ...caching import DatasetScope, _once, cached
 from ...dataset import to_dense
 
 #: Cells sampled for the PCA basis. The ``subsample`` cap is for the O(n^2) distance
@@ -51,8 +51,7 @@ def targeted_genes(scope: DatasetScope) -> np.ndarray:
         return ``nan`` rather than fail.
     """
     ds = scope.ds
-    pos = {g: i for i, g in enumerate(ds.var_names)}
-    idx = {pos[gene] for pert in ds.perturbations for gene in pert.split("+") if gene in pos}
+    idx = {int(i) for pert in ds.perturbations for i in ds.target_gene_indices(pert)}
     if not idx:
         raise ValueError(
             "no perturbation label matches a gene in var_names, so the perturbed-gene panel "
@@ -64,20 +63,28 @@ def targeted_genes(scope: DatasetScope) -> np.ndarray:
     return np.array(sorted(idx), dtype=int)
 
 
-@cached
-def fitted_pca(scope: DatasetScope, n_components: int):
-    """PCA fit on (nearly) all cells, cached per fit size."""
+def _fit_pca(scope: DatasetScope, n_components: int, keep: np.ndarray | slice = slice(None)):
+    """Fit PCA on (up to ``PCA_FIT_CAP``) observed cells, optionally restricted to ``keep`` genes."""
     from sklearn.decomposition import PCA
 
     n = scope.ds.adata.n_obs
     idx = np.arange(n)
     if n > PCA_FIT_CAP:
         idx = np.sort(np.random.default_rng(scope.seed).choice(n, PCA_FIT_CAP, replace=False))
-    X = to_dense(scope.ds.adata.X[idx]).astype(np.float64)
+    X = scope.ds.adata.X[idx]
+    if not isinstance(keep, slice):
+        X = X[:, keep]
+    X = to_dense(X).astype(np.float64)
     # sklearn's bundled BLAS/OpenMP only loads with the import above, after run_all()'s own
     # threadpool_limits already scanned -- re-scan here so it's actually caught and capped
     with threadpool_limits(limits=scope.threads):
         return PCA(n_components=min(n_components, *X.shape), random_state=scope.seed).fit(X)
+
+
+@cached
+def fitted_pca(scope: DatasetScope, n_components: int):
+    """PCA fit on (nearly) all cells, cached per fit size."""
+    return _fit_pca(scope, n_components)
 
 
 def pca_for(ctx, k):
@@ -90,3 +97,14 @@ def pca_for(ctx, k):
     projected through the old basis.
     """
     return fitted_pca(ctx, max(k, 50))
+
+
+def subset_pca_for(ctx, subset, k):
+    """Fit and cache PCA once on observed cells restricted to a dataset-wide ``subset``."""
+    fit_k = max(k, 50)
+
+    def compute():
+        keep = subset.select(ctx, None)
+        return keep, _fit_pca(ctx.scope(), fit_k, keep)
+
+    return _once(ctx._store, ("subset_pca", subset.cache_key, fit_k), compute)

@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import inspect
 import threading
-from collections.abc import Callable
+from collections.abc import Callable, Hashable
 from dataclasses import dataclass
 from typing import Any
 
@@ -24,6 +24,16 @@ import numpy as np
 from ...caching import _once
 from ...dataset import to_dense
 from ...registry import Registry
+
+_UNSET = object()
+
+
+class UndefinedSpace(ValueError):
+    """A feature space could not be constructed for one evaluation unit (e.g. empty DEG panel)."""
+
+    def __init__(self, reason: str, message: str | None = None):
+        super().__init__(message or reason)
+        self.reason = reason
 
 
 @dataclass(frozen=True)
@@ -49,22 +59,27 @@ _OP_NAMES = {OPS.union: "union", OPS.intersection: "intersection", OPS.differenc
 ``OPS.difference``."""
 
 
-def _signature_of(rule: Callable, lead: int) -> tuple[bool, str | None]:
-    """What a rule asks for: whether it wants ``pert``, and its parameter's name.
+def _signature_of(rule: Callable, lead: int) -> tuple[bool, str | None, tuple[tuple[str, Any], ...]]:
+    """What a rule asks for: whether it wants ``pert``, its primary parameter, and keyword-only options.
 
     Both are read off the signature, so neither can be declared wrong. ``lead`` counts the fixed
     leading arguments — 1 for a selection rule ``(ctx, …)``, 2 for a transform ``(X, ctx, …)``.
 
-    A rule must take one of four shapes. Naming ``pert`` is how it asks for the perturbation, and
-    *is* the declaration that its result varies by perturbation::
+    A rule's positional parameters must take one of four shapes. Naming ``pert`` is how it asks
+    for the perturbation, and *is* the declaration that its result varies by perturbation::
 
         (ctx)                (ctx, k)                dataset-wide
         (ctx, pert)          (ctx, pert, k)          per-perturbation
 
-    Anything else is rejected here rather than mis-read: ``(ctx, k, pert)`` would otherwise
-    register as dataset-wide and score every perturbation on one panel, silently.
+    Additional optional parameters may be declared as keyword-only with defaults (used by Python
+    composable spaces while keeping single-parameter CLI specs unambiguous).
     """
-    params = [p.name for p in inspect.signature(rule).parameters.values()]
+    all_params = list(inspect.signature(rule).parameters.values())
+    pos_params = [
+        p for p in all_params if p.kind in (inspect.Parameter.POSITIONAL_ONLY, inspect.Parameter.POSITIONAL_OR_KEYWORD)
+    ]
+    kw_params = [p for p in all_params if p.kind is inspect.Parameter.KEYWORD_ONLY]
+    params = [p.name for p in pos_params]
     expected_lead = ["ctx"] if lead == 1 else ["X", "ctx"]
     if params[:lead] != expected_lead:
         raise TypeError(
@@ -83,7 +98,14 @@ def _signature_of(rule: Callable, lead: int) -> tuple[bool, str | None]:
             f"({lead_args}), ({lead_args}, <param>), ({lead_args}, pert), or "
             f"({lead_args}, pert, <param>) — pert comes first when present."
         )
-    return takes_pert, (rest[0] if rest else None)
+    kw_defaults: list[tuple[str, Any]] = []
+    for p in kw_params:
+        if p.name in ("pert", "ctx", "X"):
+            raise TypeError(f"rule {rule.__name__}: {p.name!r} cannot be a keyword-only parameter")
+        if p.default is inspect.Parameter.empty:
+            raise TypeError(f"rule {rule.__name__}: keyword-only parameter {p.name!r} must have a default")
+        kw_defaults.append((p.name, p.default))
+    return takes_pert, (rest[0] if rest else None), tuple(kw_defaults)
 
 
 @dataclass(frozen=True)
@@ -94,7 +116,7 @@ class Space:
     name: str
     #: The rule: ``(ctx, …)`` for a subset, ``(X, ctx, …)`` for a transform.
     rule: Callable
-    #: The rule's parameter name (``"k"``), read from its signature; ``None`` if it takes none.
+    #: The rule's primary parameter name (``"k"``), read from its signature; ``None`` if it takes none.
     parameter: str | None
     #: Parameter value used when a caller doesn't supply one; ``None`` iff unparameterised.
     default: Any
@@ -113,6 +135,13 @@ class Space:
     #: than inside the loop (transforms only). Purely an optimisation: the rule must stay correct
     #: if it never runs.
     precompute: Callable | None = None
+    #: Optional keyword-only parameters and their defaults, configurable from Python.
+    kw_defaults: tuple[tuple[str, Any], ...] = ()
+    #: Optional ``(X, ctx, subset, **params) -> ndarray`` hook for transforms that fit natively on a
+    #: dataset-wide :class:`SubsetSpace` (e.g. ``pca(50).on(hvg(2000))``).
+    subset_apply: Callable | None = None
+    #: Optional ``(ctx, subset, **params) -> None`` warmup hook paired with ``subset_apply``.
+    subset_precompute: Callable | None = None
 
     @property
     def label(self) -> str:
@@ -122,6 +151,269 @@ class Space:
     def describe(self, value=None) -> str:
         """The description with ``{v}`` filled in — by ``value``, or by the parameter's name."""
         return self.description.format(v=f"{value:g}" if value is not None else self.parameter or "")
+
+
+class FeatureSpace:
+    """Base type for composable feature spaces accepted by :attr:`~scperteval.types.Protocol.space`."""
+
+    @property
+    def cache_key(self) -> Hashable:
+        """Hashable identity for dataset-scoped caches."""
+        raise NotImplementedError
+
+    @property
+    def is_subset(self) -> bool:
+        """Whether this space selects a subset of genes rather than transforming the axis."""
+        raise NotImplementedError
+
+    @property
+    def per_pert(self) -> bool:
+        """Whether the selected features or transform vary by perturbation."""
+        raise NotImplementedError
+
+    def apply(self, X, ctx, pert: str | None) -> np.ndarray:
+        """Project ``X`` (cells × genes) into this feature space."""
+        raise NotImplementedError
+
+    def precompute(self, ctx) -> None:
+        """Optional warmup hook run during :meth:`~scperteval.context.Context.warm`."""
+
+
+class SubsetSpace(FeatureSpace):
+    """A composable gene-subset space supporting ``|`` (union), ``&`` (intersection), and ``-`` (difference)."""
+
+    @property
+    def is_subset(self) -> bool:
+        """Gene-subset spaces narrow the gene axis."""
+        return True
+
+    def _select_raw(self, ctx, pert: str | None) -> np.ndarray | slice:
+        raise NotImplementedError
+
+    def select(self, ctx, pert: str | None) -> np.ndarray | slice:
+        """Return integer positions (or a slice) into the full gene axis, rejecting empty panels."""
+        keep = self._select_raw(ctx, pert)
+        if isinstance(keep, np.ndarray) and keep.size == 0:
+            raise UndefinedSpace(
+                "empty_gene_space",
+                f"space {self!r} selected no genes for {pert!r}.",
+            )
+        return keep
+
+    def apply(self, X, ctx, pert: str | None) -> np.ndarray:
+        """Slice ``X`` to the selected genes and return a dense array."""
+        return to_dense(X[:, self.select(ctx, pert)])
+
+    def __or__(self, other: SubsetSpace) -> CombinedSubset:
+        if not isinstance(other, SubsetSpace):
+            return NotImplemented
+        return CombinedSubset(OPS.union, self, other)
+
+    def __and__(self, other: SubsetSpace) -> CombinedSubset:
+        if not isinstance(other, SubsetSpace):
+            return NotImplemented
+        return CombinedSubset(OPS.intersection, self, other)
+
+    def __sub__(self, other: SubsetSpace) -> CombinedSubset:
+        if not isinstance(other, SubsetSpace):
+            return NotImplemented
+        return CombinedSubset(OPS.difference, self, other)
+
+
+class TransformSpace(FeatureSpace):
+    """A feature space that replaces the gene axis (e.g. PCA), optionally restricted via :meth:`on`."""
+
+    @property
+    def is_subset(self) -> bool:
+        """Transforms replace the gene axis rather than subsetting it."""
+        return False
+
+    def on(self, subset: SubsetSpace) -> PipedTransform:
+        """Apply (and, where supported, fit) this transform restricted to a dataset-wide ``subset``."""
+        if not isinstance(subset, SubsetSpace):
+            raise TypeError(f"on() expects a SubsetSpace, got {type(subset).__name__}")
+        return PipedTransform(subset, self)
+
+
+@dataclass(frozen=True)
+class RuleSubset(SubsetSpace):
+    """A subset space instantiated from a catalog rule without mutating the global registry."""
+
+    name: str
+    rule: Callable
+    params: tuple[tuple[str, Any], ...]
+    takes_pert: bool
+    _per_pert: bool
+
+    @property
+    def per_pert(self) -> bool:
+        """Whether this subset varies by perturbation."""
+        return self._per_pert
+
+    @property
+    def cache_key(self) -> Hashable:
+        """Structural hashable identity preserving exact parameter values."""
+        return ("subset", self.name, self.params)
+
+    def _select_raw(self, ctx, pert: str | None) -> np.ndarray | slice:
+        kwargs = dict(self.params)
+
+        def call():
+            return self.rule(ctx, **({"pert": pert} if self.takes_pert else {}), **kwargs)
+
+        if self._per_pert:
+            return call()
+        return _once(ctx._store, ("select", self.cache_key), call)
+
+
+@dataclass(frozen=True)
+class CombinedSubset(SubsetSpace):
+    """Set-algebra composition (union, intersection, difference) of two :class:`SubsetSpace` objects."""
+
+    op: Callable
+    left: SubsetSpace
+    right: SubsetSpace
+
+    @property
+    def per_pert(self) -> bool:
+        """Derived from operands: varies by perturbation iff either operand does."""
+        return self.left.per_pert or self.right.per_pert
+
+    @property
+    def cache_key(self) -> Hashable:
+        """Structural hashable identity for the composed expression."""
+        return ("combine", _OP_NAMES[self.op], self.left.cache_key, self.right.cache_key)
+
+    def _select_raw(self, ctx, pert: str | None) -> np.ndarray:
+        def call() -> np.ndarray:
+            genes = np.arange(len(ctx.ds.var_names))
+            lhs = genes[self.left._select_raw(ctx, pert)]
+            rhs = genes[self.right._select_raw(ctx, pert)]
+            return np.asarray(self.op(lhs, rhs), dtype=int)
+
+        if self.per_pert:
+            return call()
+        return _once(ctx._store, ("select", self.cache_key), call)
+
+
+@dataclass(frozen=True)
+class RuleTransform(TransformSpace):
+    """A transform space instantiated from a catalog rule without mutating the global registry."""
+
+    name: str
+    rule: Callable
+    params: tuple[tuple[str, Any], ...]
+    takes_pert: bool
+    _per_pert: bool
+    primary_value: Any = None
+    precompute_fn: Callable | None = None
+    subset_apply: Callable | None = None
+    subset_precompute: Callable | None = None
+
+    @property
+    def per_pert(self) -> bool:
+        """Whether this transform varies by perturbation."""
+        return self._per_pert
+
+    @property
+    def cache_key(self) -> Hashable:
+        """Structural hashable identity preserving exact parameter values."""
+        return ("transform", self.name, self.params)
+
+    def precompute(self, ctx) -> None:
+        """Run the catalog transform's warmup hook if declared."""
+        if self.precompute_fn is not None:
+            self.precompute_fn(ctx, self.primary_value)
+
+    def apply(self, X, ctx, pert: str | None) -> np.ndarray:
+        """Apply the transform rule to ``X``."""
+        kwargs = dict(self.params)
+        return self.rule(X, ctx, **({"pert": pert} if self.takes_pert else {}), **kwargs)
+
+
+@dataclass(frozen=True)
+class PipedTransform(TransformSpace):
+    """A dataset-wide :class:`SubsetSpace` paired with a :class:`TransformSpace` (``transform.on(subset)``)."""
+
+    subset: SubsetSpace
+    transform: TransformSpace
+
+    def __post_init__(self) -> None:
+        if self.subset.per_pert:
+            raise ValueError("subset-then-transform requires a dataset-wide subset space")
+
+    @property
+    def per_pert(self) -> bool:
+        """Derived from the downstream transform."""
+        return self.transform.per_pert
+
+    @property
+    def cache_key(self) -> Hashable:
+        """Structural hashable identity combining the subset and transform."""
+        return ("pipe", self.subset.cache_key, self.transform.cache_key)
+
+    def precompute(self, ctx) -> None:
+        """Warm the piped transform on the restricted gene subset."""
+        if isinstance(self.transform, RuleTransform) and self.transform.subset_precompute is not None:
+            self.transform.subset_precompute(ctx, self.subset, **dict(self.transform.params))
+            return
+        self.transform.precompute(ctx)
+
+    def apply(self, X, ctx, pert: str | None) -> np.ndarray:
+        """Apply the transform restricted to ``subset``."""
+        if isinstance(self.transform, RuleTransform) and self.transform.subset_apply is not None:
+            kwargs = dict(self.transform.params)
+            if self.transform.takes_pert:
+                kwargs["pert"] = pert
+            return self.transform.subset_apply(X, ctx, self.subset, **kwargs)
+        keep = self.subset.select(ctx, pert)
+        return self.transform.apply(X[:, keep], ctx, pert)
+
+
+@dataclass(frozen=True)
+class _RegisteredSubset(SubsetSpace):
+    """Thin adapter for a named subset space looked up in :data:`SPACES`."""
+
+    name: str
+    _select: Callable
+    _per_pert: bool
+
+    @property
+    def per_pert(self) -> bool:
+        return self._per_pert
+
+    @property
+    def cache_key(self) -> Hashable:
+        return self.name
+
+    def _select_raw(self, ctx, pert: str | None) -> np.ndarray | slice:
+        return self._select(ctx, pert)
+
+
+@dataclass(frozen=True)
+class _RegisteredTransform(TransformSpace):
+    """Thin adapter for a named transform space looked up in :data:`SPACES`."""
+
+    name: str
+    _apply: Callable
+    _per_pert: bool
+    _precompute: Callable | None = None
+    _value: Any = None
+
+    @property
+    def per_pert(self) -> bool:
+        return self._per_pert
+
+    @property
+    def cache_key(self) -> Hashable:
+        return self.name
+
+    def precompute(self, ctx) -> None:
+        if self._precompute is not None:
+            self._precompute(ctx, self._value)
+
+    def apply(self, X, ctx, pert: str | None) -> np.ndarray:
+        return self._apply(X, ctx, pert)
 
 
 class SpaceRegistry(Registry):
@@ -182,13 +474,24 @@ class SpaceRegistry(Registry):
         """
 
         def deco(rule: Callable) -> Callable:
-            takes_pert, parameter = _signature_of(rule, 1)
-            self._define(Space(name, rule, parameter, default, description, takes_pert, takes_pert))
+            takes_pert, parameter, kw_defaults = _signature_of(rule, 1)
+            self._define(
+                Space(name, rule, parameter, default, description, takes_pert, takes_pert, kw_defaults=kw_defaults)
+            )
             return rule
 
         return deco
 
-    def transform(self, name: str, *, default=None, description="", precompute=None) -> Callable:
+    def transform(
+        self,
+        name: str,
+        *,
+        default=None,
+        description="",
+        precompute=None,
+        subset_apply=None,
+        subset_precompute=None,
+    ) -> Callable:
         """Decorator: define a space that replaces the gene axis instead of narrowing it.
 
         The rule is ``(X, ctx, pert, value) -> dense cells × features array``, built directly, so
@@ -199,8 +502,23 @@ class SpaceRegistry(Registry):
         """
 
         def deco(rule: Callable) -> Callable:
-            takes_pert, parameter = _signature_of(rule, 2)
-            self._define(Space(name, rule, parameter, default, description, takes_pert, takes_pert, False, precompute))
+            takes_pert, parameter, kw_defaults = _signature_of(rule, 2)
+            self._define(
+                Space(
+                    name,
+                    rule,
+                    parameter,
+                    default,
+                    description,
+                    takes_pert,
+                    takes_pert,
+                    False,
+                    precompute,
+                    kw_defaults=kw_defaults,
+                    subset_apply=subset_apply,
+                    subset_precompute=subset_precompute,
+                )
+            )
             return rule
 
         return deco
@@ -343,10 +661,11 @@ class SpaceRegistry(Registry):
                 def apply(X, ctx, pert):
                     keep = select(ctx, pert)
                     if isinstance(keep, np.ndarray) and keep.size == 0:
-                        raise ValueError(
+                        raise UndefinedSpace(
+                            "empty_gene_space",
                             f"space {key!r} selected no genes for {pert!r}. Every metric would return "
                             f"nan rather than fail, so this is refused: widen the space, or check that "
-                            f"its criterion matches the dataset."
+                            f"its criterion matches the dataset.",
                         )
                     return to_dense(X[:, keep])
 
@@ -360,6 +679,62 @@ class SpaceRegistry(Registry):
                     **common,
                 )
         return key
+
+    def space(self, name: str, value=_UNSET, **kwargs) -> FeatureSpace:
+        """Build a composable :class:`FeatureSpace` value object from a catalog definition.
+
+        Unlike :meth:`instance`, this does not register anything globally or mutate the catalog.
+        """
+        if name not in self._catalog:
+            raise KeyError(f"unknown {self.kind} {name!r}; available: {sorted(self._catalog)}")
+        defn = self._catalog[name]
+        allowed_kw = dict(defn.kw_defaults)
+        unknown = sorted(set(kwargs) - set(allowed_kw))
+        if unknown:
+            raise TypeError(f"{self.kind} {name!r} got unexpected keyword argument(s): {', '.join(unknown)}")
+        merged: dict[str, Any] = dict(allowed_kw)
+        merged.update(kwargs)
+
+        primary_value: Any = None
+        if defn.parameter is None:
+            if value is not _UNSET:
+                raise TypeError(f"{self.kind} {name!r} takes no parameter, got {value!r}")
+        else:
+            primary_value = defn.default if value is _UNSET else value
+            if primary_value is not None and (
+                not isinstance(primary_value, (int, float)) or isinstance(primary_value, bool) or primary_value <= 0
+            ):
+                raise ValueError(f"{self.kind} {name!r} takes a positive number, got {primary_value!r}")
+            merged[defn.parameter] = primary_value
+
+        params = tuple(sorted(merged.items()))
+        if defn.is_subset:
+            return RuleSubset(defn.name, defn.rule, params, defn.takes_pert, defn.per_pert)
+        return RuleTransform(
+            defn.name,
+            defn.rule,
+            params,
+            defn.takes_pert,
+            defn.per_pert,
+            primary_value=primary_value,
+            precompute_fn=defn.precompute,
+            subset_apply=defn.subset_apply,
+            subset_precompute=defn.subset_precompute,
+        )
+
+
+def resolve_space(space: str | FeatureSpace) -> FeatureSpace:
+    """Resolve a registered space name or composable :class:`FeatureSpace` to a :class:`FeatureSpace`."""
+    if isinstance(space, FeatureSpace):
+        return space
+    if isinstance(space, str):
+        fn = SPACES[space]
+        meta = SPACES.meta(space)
+        per_pert = not meta.get("global_space", True)
+        if "select" in meta:
+            return _RegisteredSubset(space, meta["select"], per_pert)
+        return _RegisteredTransform(space, fn, per_pert, meta.get("precompute"), meta.get("value"))
+    raise TypeError(f"space must be a registered name (str) or FeatureSpace, not {type(space).__name__}")
 
 
 def _bind(space: Space, value):

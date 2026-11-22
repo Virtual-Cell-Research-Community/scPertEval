@@ -16,6 +16,23 @@
 - `MetricOutcome` and an `undefined_reason` column in per-perturbation tables.
 - Six centroid scalar metrics in `scperteval.protocols.metrics`: `mae`, `spearman`, `cosine`,
   `squared_pearson`, `explained_variance`, and `clipped_r2`.
+- First-class composable `FeatureSpace` objects in `scperteval.blocks.spaces` (`full()`, `hvg()`,
+  `heg()`, `top()`, multi-knob `degs()`, `perturbed_genes()`, `own_target()`, `pca()`), supporting
+  `|` / `&` / `-` set composition and `transform.on(subset)` without mutating the global `SPACES`
+  registry (building on #39 by @psl-schaefer).
+- `target_key` option on `prepare()` / `RunConfig` for resolving target genes from an `adata.obs`
+  column.
+- Pure DE-recovery metrics in `scperteval.protocols.metrics`: `de_f1`, `de_macro_f1`, `de_jaccard`,
+  `de_precision`, `de_recall`, `de_direction_concordance`, `de_spearman`, and
+  `de_overlap_at_truth_size`.
+
+### Changed
+
+- `Context._de_view()` now preserves signed `PerturbationDEResult` for both truth and candidate and
+  applies `Protocol.space` to restrict the DE evaluation gene universe without altering biological
+  DE labels (building on #39 by @psl-schaefer).
+- Empty per-perturbation feature spaces raise `UndefinedSpace` (a `ValueError` subclass) that the
+  runner records as `NaN` with an `undefined_reason` rather than aborting the run.
 
 ### Fixed
 

@@ -56,6 +56,10 @@ DE backends, feature spaces, control sources, and calibrators.
     SPACES
     SpaceRegistry
     Space
+    FeatureSpace
+    SubsetSpace
+    TransformSpace
+    UndefinedSpace
 ```
 
 ## DE backends

@@ -5,8 +5,12 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass, field, replace
 from functools import partial
+from typing import TYPE_CHECKING
 
 import numpy as np
+
+if TYPE_CHECKING:
+    from .blocks.spaces.registry import FeatureSpace
 
 
 @dataclass
@@ -44,6 +48,8 @@ class RunConfig:
     perturbation_key: str = "perturbation"
     #: Label in ``perturbation_key`` that identifies control cells (default ``"control"``).
     control_label: str = "control"
+    #: Optional ``adata.obs`` column holding target gene symbols (when perturbation labels are not gene symbols).
+    target_key: str | None = None
     #: If ``True``, also write a per-protocol wall-clock timing CSV.
     profile: bool = False
 
@@ -131,8 +137,9 @@ class Protocol:
     representation: str
     #: ``"perturbation"`` (default) or ``"dataset"`` — how many perturbations the metric sees at once.
     scope: str = "perturbation"
-    #: Feature space applied before scoring (default ``"full"``).
-    space: str = "full"
+    #: Feature space applied before scoring — a registered space name or a composable
+    #: :class:`~scperteval.blocks.spaces.FeatureSpace` object (default ``"full"``).
+    space: str | FeatureSpace = "full"
     #: A centroid **source name** whose centroid is subtracted before scoring
     #: (e.g. ``"control_mean"``, ``"all_perturbed_mean"``), or ``None`` for no centering.
     centering: str | None = None

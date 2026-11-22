@@ -95,6 +95,16 @@ Whether the composite varies by perturbation is **derived from its operands** â€
 per-perturbation space such as `top_50` and the result is per-perturbation too. Nothing to
 declare, so nothing to get wrong.
 
+In Python, you can also compose spaces on the fly as immutable objects without registering them in
+the global catalog, using `|`, `&`, `-` on subsets and `.on(subset)` on transforms:
+
+```python
+from scperteval.blocks import spaces
+
+panel = spaces.hvg(2000) | spaces.own_target()
+hvg_pca = spaces.pca(50).on(spaces.hvg(2000))
+```
+
 ### Spaces that aren't gene subsets
 
 `pca_<k>` replaces the gene axis with components instead of narrowing it, so it has no gene

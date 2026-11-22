@@ -48,24 +48,38 @@ b = sp.calibrate(prep, "mse")
 c = sp.de(prep, "t-test")
 ```
 
-### Concrete protocols & `truth_availability()`
+### Concrete protocols, composable spaces & `truth_availability()`
 
-Python callers can pass concrete {class}`~scperteval.types.Protocol` objects to `prepare()`,
-`calibrate()`, `score()`, and `truth_availability()` without registering them in the curated CLI
-catalog:
+Python callers can pass concrete {class}`~scperteval.types.Protocol` objects and composable
+{mod}`scperteval.blocks.spaces` objects directly to `prepare()`, `calibrate()`, `score()`, and
+`truth_availability()` without mutating the curated CLI catalog:
 
 ```python
+from functools import partial
+from scperteval.blocks import spaces
 from scperteval.protocols import metrics
 from scperteval.types import Protocol
 
-proto = Protocol("my_mae", metrics.mae, representation="centroid", better="lower", perfect=0.0)
-prep = sp.prepare(adata, [proto])
-res = sp.score(prep, proto, predictions)
+deg50 = spaces.degs(padj=0.05, top_k=50, rank_by="significance", reference="control") - spaces.own_target()
+proto = Protocol("pearson_deg50_no_target", metrics.pearson, "centroid", space=deg50)
+
+hvg_pca = spaces.pca(50).on(spaces.hvg(2000))
+edist = Protocol("edist_hvg_pca", metrics.energy_distance, "population", space=hvg_pca, better="lower", perfect=0.0)
+
+de_f1 = Protocol(
+    "de_f1_no_target",
+    partial(metrics.de_f1, padj=0.05),
+    "de",
+    space=spaces.full() - spaces.own_target(),
+    reference="control",
+)
 ```
 
-Concrete protocols must be fully resolved and cannot shadow a curated protocol name with different
-semantics. Use {func}`~scperteval.api.truth_availability` to audit which `(protocol, perturbation)`
-units are ground-truth-defined before loading predictions (default `truth="gt_all_cells"`; pass
+Subset spaces compose with `|` (union), `&` (intersection), and `-` (difference); transforms
+restrict to a dataset-wide subset via `.on(subset)` (e.g. `spaces.pca(50).on(spaces.hvg(2000))`). If perturbation labels are not gene
+symbols (e.g., namespaced labels), pass `target_key="target_gene"` to `prepare()`. Use
+{func}`~scperteval.api.truth_availability` to audit which `(protocol, perturbation)` units are
+ground-truth-defined before loading predictions (default `truth="gt_all_cells"`; pass
 `truth="gt_half"` to match calibration cohorts).
 
 ## Calibrate

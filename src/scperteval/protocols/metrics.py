@@ -29,6 +29,7 @@ from scipy.stats import spearmanr
 from sklearn.metrics import average_precision_score, explained_variance_score, r2_score, roc_auc_score
 
 from ..blocks.de import mejia_weights
+from ..types import MetricOutcome
 
 # --- shared parameter blocks, substituted into docstrings at decoration time ---
 
@@ -66,9 +67,9 @@ ctx : Context
 
 _DE = """\
 gt : ~scperteval.types.PerturbationDEResult
-    Ground-truth DE result; ``gt.pvalue_adj`` defines the positive class.
-prediction : numpy.ndarray
-    Per-gene absolute DE score ranking from the candidate source, shape ``(G,)``.
+    Ground-truth DE result with signed ``statistic`` and ``pvalue_adj``.
+prediction : ~scperteval.types.PerturbationDEResult
+    Candidate DE result with signed ``statistic`` and ``pvalue_adj``.
 ctx : Context
     Unused; present for signature compatibility."""
 
@@ -610,74 +611,343 @@ def nir(gt, prediction, ctx):
     return 1.0 - rank_retrieval(gt, prediction, ctx, transpose=True)
 
 
+_DE_RANKINGS = ("absolute_effect", "significance")
+
+
+def _de_check_finite(gt, prediction) -> MetricOutcome | None:
+    """Validate finiteness of DE statistics/p-values before computing a DE metric."""
+    t_stat = np.asarray(gt.statistic, dtype=float)
+    t_padj = np.asarray(gt.pvalue_adj, dtype=float)
+    if not (np.isfinite(t_stat).all() and np.isfinite(t_padj).all()):
+        return MetricOutcome(float("nan"), "non_finite_ground_truth_de_statistic")
+    if hasattr(prediction, "statistic"):
+        p_stat = np.asarray(prediction.statistic, dtype=float)
+        p_padj = np.asarray(prediction.pvalue_adj, dtype=float)
+        if not (np.isfinite(p_stat).all() and np.isfinite(p_padj).all()):
+            return MetricOutcome(float("nan"), "non_finite_prediction_de_statistic")
+    elif not np.isfinite(np.asarray(prediction, dtype=float)).all():
+        return MetricOutcome(float("nan"), "non_finite_prediction_de_statistic")
+    return None
+
+
+def _de_scores(result, rank_by: str = "absolute_effect") -> np.ndarray:
+    """Continuous per-gene scores whose descending order is the DE ranking."""
+    if rank_by not in _DE_RANKINGS:
+        raise ValueError(f"unknown rank_by {rank_by!r}; expected {list(_DE_RANKINGS)}")
+    if not hasattr(result, "statistic"):
+        return np.asarray(result, dtype=float)
+    statistic = np.asarray(result.statistic, dtype=float)
+    if rank_by == "significance":
+        padj = np.asarray(result.pvalue_adj, dtype=float)
+        idx = np.arange(len(statistic))
+        order = np.lexsort((idx, -np.abs(statistic), padj))
+        scores = np.empty(len(statistic), dtype=float)
+        scores[order] = np.arange(len(statistic), 0, -1, dtype=float)
+        return scores
+    return np.abs(statistic)
+
+
+def _de_top_mask(scores: np.ndarray, k: int) -> np.ndarray:
+    mask = np.zeros(len(scores), dtype=bool)
+    mask[np.argsort(-scores, kind="stable")[:k]] = True
+    return mask
+
+
+def _de_positives(
+    result,
+    *,
+    padj: float | None = 0.05,
+    top_k: int | None = None,
+    rank_by: str = "significance",
+) -> np.ndarray:
+    """Boolean mask of positive DEGs under optional ``padj`` threshold and ``top_k`` cap."""
+    if padj is not None and not 0 < padj <= 1:
+        raise ValueError("padj must be in (0, 1]")
+    if top_k is not None and top_k <= 0:
+        raise ValueError("top_k must be positive")
+    if rank_by not in _DE_RANKINGS:
+        raise ValueError(f"unknown rank_by {rank_by!r}; expected {list(_DE_RANKINGS)}")
+    stat = np.asarray(result.statistic, dtype=float)
+    pvals = np.asarray(result.pvalue_adj, dtype=float)
+    mask = np.ones(len(stat), dtype=bool) if padj is None else (pvals < padj)
+    if top_k is None:
+        return mask
+    candidates = np.flatnonzero(mask)
+    if candidates.size <= top_k:
+        return mask
+    if rank_by == "significance":
+        order = np.lexsort((candidates, -np.abs(stat[candidates]), pvals[candidates]))
+    else:
+        order = np.lexsort((candidates, pvals[candidates], -np.abs(stat[candidates])))
+    out = np.zeros(len(stat), dtype=bool)
+    out[candidates[order[:top_k]]] = True
+    return out
+
+
+def _de_pred_positives(
+    prediction,
+    *,
+    padj: float | None = 0.05,
+    top_k: int | None = None,
+    rank_by: str = "significance",
+) -> np.ndarray:
+    """Boolean mask of predicted positive DEGs: top-k when ``top_k`` is set, else ``pvalue_adj < padj``."""
+    if top_k is not None:
+        scores = _de_scores(prediction, rank_by)
+        return _de_top_mask(scores, min(top_k, len(scores)))
+    if padj is None:
+        return np.ones(len(prediction.pvalue_adj), dtype=bool)
+    return np.asarray(prediction.pvalue_adj, dtype=float) < padj
+
+
+def _binary_f1(truth: np.ndarray, prediction: np.ndarray, *, positive: bool = True) -> float:
+    expected = truth if positive else ~truth
+    observed = prediction if positive else ~prediction
+    tp = int(np.logical_and(expected, observed).sum())
+    fp = int(np.logical_and(~expected, observed).sum())
+    fn = int(np.logical_and(expected, ~observed).sum())
+    denom = 2 * tp + fp + fn
+    return 0.0 if denom == 0 else (2 * tp) / denom
+
+
 @_doc(params=_DE)
-def de_auprc(gt, prediction, ctx):
+def de_auprc(
+    gt, prediction, ctx, *, padj: float | None = 0.05, top_k: int | None = None, rank_by: str = "absolute_effect"
+):
     """Area under the precision-recall curve for DEG recovery.
 
-    Positive class: ground-truth DEGs with ``gt.pvalue_adj < 0.05``.
-
     Parameters
     ----------
     %(params)s
+    padj : float or None, optional
+        Adjusted p-value cutoff defining ground-truth positive DEGs (default 0.05).
+    top_k : int or None, optional
+        Cap the ground-truth positive set to the top ``top_k`` genes.
+    rank_by : {"absolute_effect", "significance"}, optional
+        Ranking criterion for prediction scores (default ``"absolute_effect"``).
 
     Returns
     -------
-    float
-        AUPRC in [0, 1]; higher is better.
-        Returns ``nan`` if all genes fall in the same class.
+    float or ~scperteval.types.MetricOutcome
+        AUPRC in [0, 1]; higher is better. Returns an undefined outcome when there are no
+        ground-truth positive DEGs.
     """
-    labels = gt.pvalue_adj < 0.05
-    if labels.sum() == 0 or labels.sum() == labels.size:
-        return float("nan")
-    return float(average_precision_score(labels, prediction))
+    invalid = _de_check_finite(gt, prediction)
+    if invalid is not None:
+        return invalid
+    labels = _de_positives(gt, padj=padj, top_k=top_k, rank_by=rank_by)
+    if not labels.any():
+        return MetricOutcome(float("nan"), "no_ground_truth_positive_degs")
+    scores = _de_scores(prediction, rank_by)
+    return float(average_precision_score(labels, scores))
 
 
 @_doc(params=_DE)
-def de_auroc(gt, prediction, ctx):
+def de_auroc(
+    gt, prediction, ctx, *, padj: float | None = 0.05, top_k: int | None = None, rank_by: str = "absolute_effect"
+):
     """Area under the ROC curve for DEG recovery.
 
-    Positive class: ground-truth DEGs with ``gt.pvalue_adj < 0.05``.
-
     Parameters
     ----------
     %(params)s
+    padj : float or None, optional
+        Adjusted p-value cutoff defining ground-truth positive DEGs (default 0.05).
+    top_k : int or None, optional
+        Cap the ground-truth positive set to the top ``top_k`` genes.
+    rank_by : {"absolute_effect", "significance"}, optional
+        Ranking criterion for prediction scores (default ``"absolute_effect"``).
 
     Returns
     -------
-    float
-        AUROC in [0, 1]; higher is better.
-        Returns ``nan`` if all genes fall in the same class.
+    float or ~scperteval.types.MetricOutcome
+        AUROC in [0, 1]; higher is better. Returns an undefined outcome when ground-truth
+        labels contain only a single class.
     """
-    labels = gt.pvalue_adj < 0.05
-    if labels.sum() == 0 or labels.sum() == labels.size:
-        return float("nan")
-    return float(roc_auc_score(labels, prediction))
+    invalid = _de_check_finite(gt, prediction)
+    if invalid is not None:
+        return invalid
+    labels = _de_positives(gt, padj=padj, top_k=top_k, rank_by=rank_by)
+    if not labels.any() or labels.all():
+        return MetricOutcome(float("nan"), "single_ground_truth_class")
+    scores = _de_scores(prediction, rank_by)
+    return float(roc_auc_score(labels, scores))
 
 
 @_doc(params=_DE)
-def de_overlap(gt, prediction, ctx, k=50):
+def de_overlap(gt, prediction, ctx, k: int = 50, *, rank_by: str = "absolute_effect"):
     r"""Top-k overlap between ground-truth and predicted DE gene rankings.
 
     .. math::
 
         \text{Overlap}_k
-        = \frac{|\text{top-}k(|gt.statistic|) \cap \text{top-}k(pred)|}{k}
+        = \frac{|\text{top-}k(gt) \cap \text{top-}k(pred)|}{k}
 
     Parameters
     ----------
     %(params)s
     k : int
         Number of top genes to intersect (default 50).
+    rank_by : {"absolute_effect", "significance"}, optional
+        Ranking criterion (default ``"absolute_effect"``).
 
     Returns
     -------
-    float
+    float or ~scperteval.types.MetricOutcome
         Fraction of top-k genes shared, in [0, 1]; higher is better.
-        Returns ``nan`` if k >= number of genes.
     """
-    truth = np.abs(gt.statistic)
-    if k >= truth.size:
-        return float("nan")
-    top_truth = np.argpartition(-truth, k - 1)[:k]
-    top_prediction = np.argpartition(-prediction, k - 1)[:k]
-    return float(np.intersect1d(top_truth, top_prediction).size) / k
+    if k <= 0:
+        raise ValueError("k must be positive")
+    invalid = _de_check_finite(gt, prediction)
+    if invalid is not None:
+        return invalid
+    truth_scores = _de_scores(gt, rank_by)
+    pred_scores = _de_scores(prediction, rank_by)
+    eff_k = min(k, truth_scores.size)
+    if eff_k == 0:
+        return MetricOutcome(float("nan"), "empty_gene_space")
+    top_truth = _de_top_mask(truth_scores, eff_k)
+    top_pred = _de_top_mask(pred_scores, eff_k)
+    return float(np.logical_and(top_truth, top_pred).sum() / eff_k)
+
+
+@_doc(params=_DE)
+def de_overlap_at_truth_size(
+    gt, prediction, ctx, *, padj: float | None = 0.05, top_k: int | None = None, rank_by: str = "significance"
+):
+    """Overlap between ground-truth positive DEGs and the top-N predicted DEGs (N = truth DEG count)."""
+    invalid = _de_check_finite(gt, prediction)
+    if invalid is not None:
+        return invalid
+    truth_pos = _de_positives(gt, padj=padj, top_k=top_k, rank_by=rank_by)
+    n = int(truth_pos.sum())
+    if n == 0:
+        return MetricOutcome(float("nan"), "no_ground_truth_positive_degs")
+    pred_top = _de_top_mask(_de_scores(prediction, rank_by), n)
+    return float(np.logical_and(truth_pos, pred_top).sum() / n)
+
+
+@_doc(params=_DE)
+def de_direction_concordance(
+    gt, prediction, ctx, *, padj: float | None = 0.05, top_k: int | None = None, rank_by: str = "significance"
+):
+    """Fraction of ground-truth positive DEGs with matching signed DE direction."""
+    invalid = _de_check_finite(gt, prediction)
+    if invalid is not None:
+        return invalid
+    truth_pos = _de_positives(gt, padj=padj, top_k=top_k, rank_by=rank_by)
+    if not truth_pos.any():
+        return MetricOutcome(float("nan"), "no_ground_truth_positive_degs")
+    t_stat = np.asarray(gt.statistic, dtype=float)
+    p_stat = np.asarray(prediction.statistic, dtype=float)
+    return float(np.mean(np.sign(t_stat[truth_pos]) == np.sign(p_stat[truth_pos])))
+
+
+@_doc(params=_DE)
+def de_spearman(
+    gt,
+    prediction,
+    ctx,
+    *,
+    degs_only: bool = False,
+    padj: float | None = 0.05,
+    top_k: int | None = None,
+    rank_by: str = "significance",
+):
+    """Spearman rank correlation between signed ground-truth and predicted DE statistics.
+
+    Pass ``degs_only=True`` (or restrict ``Protocol.space`` to ``spaces.degs(...)``) to correlate
+    over ground-truth positive DEGs only.
+    """
+    invalid = _de_check_finite(gt, prediction)
+    if invalid is not None:
+        return invalid
+    t_stat = np.asarray(gt.statistic, dtype=float)
+    p_stat = np.asarray(prediction.statistic, dtype=float)
+    if degs_only:
+        use = _de_positives(gt, padj=padj, top_k=top_k, rank_by=rank_by)
+        if not use.any():
+            return MetricOutcome(float("nan"), "no_ground_truth_positive_degs")
+        t_stat = t_stat[use]
+        p_stat = p_stat[use]
+    if np.ptp(t_stat) == 0:
+        return MetricOutcome(float("nan"), "constant_ground_truth_de_statistic")
+    if np.ptp(p_stat) == 0:
+        return 0.0
+    result: Any = spearmanr(t_stat, p_stat)
+    return float(result.statistic)
+
+
+@_doc(params=_DE)
+def de_recall(
+    gt, prediction, ctx, *, padj: float | None = 0.05, top_k: int | None = None, rank_by: str = "significance"
+):
+    """Recall (true-positive rate) of predicted positive DEGs against ground-truth positive DEGs."""
+    invalid = _de_check_finite(gt, prediction)
+    if invalid is not None:
+        return invalid
+    truth_pos = _de_positives(gt, padj=padj, top_k=top_k, rank_by=rank_by)
+    if not truth_pos.any():
+        return MetricOutcome(float("nan"), "no_ground_truth_positive_degs")
+    pred_pos = _de_pred_positives(prediction, padj=padj, top_k=top_k, rank_by=rank_by)
+    return float(np.logical_and(truth_pos, pred_pos).sum() / truth_pos.sum())
+
+
+@_doc(params=_DE)
+def de_precision(
+    gt, prediction, ctx, *, padj: float | None = 0.05, top_k: int | None = None, rank_by: str = "significance"
+):
+    """Precision of predicted positive DEGs against ground-truth positive DEGs."""
+    invalid = _de_check_finite(gt, prediction)
+    if invalid is not None:
+        return invalid
+    truth_pos = _de_positives(gt, padj=padj, top_k=top_k, rank_by=rank_by)
+    if not truth_pos.any():
+        return MetricOutcome(float("nan"), "no_ground_truth_positive_degs")
+    pred_pos = _de_pred_positives(prediction, padj=padj, top_k=top_k, rank_by=rank_by)
+    predicted = int(pred_pos.sum())
+    if predicted == 0:
+        return 0.0
+    return float(np.logical_and(truth_pos, pred_pos).sum() / predicted)
+
+
+@_doc(params=_DE)
+def de_f1(gt, prediction, ctx, *, padj: float | None = 0.05, top_k: int | None = None, rank_by: str = "significance"):
+    """Binary F1 score of predicted positive DEGs against ground-truth positive DEGs."""
+    invalid = _de_check_finite(gt, prediction)
+    if invalid is not None:
+        return invalid
+    truth_pos = _de_positives(gt, padj=padj, top_k=top_k, rank_by=rank_by)
+    if not truth_pos.any():
+        return MetricOutcome(float("nan"), "no_ground_truth_positive_degs")
+    pred_pos = _de_pred_positives(prediction, padj=padj, top_k=top_k, rank_by=rank_by)
+    return _binary_f1(truth_pos, pred_pos)
+
+
+@_doc(params=_DE)
+def de_macro_f1(
+    gt, prediction, ctx, *, padj: float | None = 0.05, top_k: int | None = None, rank_by: str = "significance"
+):
+    """Macro-averaged F1 across positive and negative DEG classes."""
+    invalid = _de_check_finite(gt, prediction)
+    if invalid is not None:
+        return invalid
+    truth_pos = _de_positives(gt, padj=padj, top_k=top_k, rank_by=rank_by)
+    if not truth_pos.any():
+        return MetricOutcome(float("nan"), "no_ground_truth_positive_degs")
+    pred_pos = _de_pred_positives(prediction, padj=padj, top_k=top_k, rank_by=rank_by)
+    return (_binary_f1(truth_pos, pred_pos, positive=True) + _binary_f1(truth_pos, pred_pos, positive=False)) / 2.0
+
+
+@_doc(params=_DE)
+def de_jaccard(
+    gt, prediction, ctx, *, padj: float | None = 0.05, top_k: int | None = None, rank_by: str = "significance"
+):
+    """Jaccard similarity between ground-truth and predicted positive DEG sets."""
+    invalid = _de_check_finite(gt, prediction)
+    if invalid is not None:
+        return invalid
+    truth_pos = _de_positives(gt, padj=padj, top_k=top_k, rank_by=rank_by)
+    pred_pos = _de_pred_positives(prediction, padj=padj, top_k=top_k, rank_by=rank_by)
+    union = int(np.logical_or(truth_pos, pred_pos).sum())
+    return 1.0 if union == 0 else float(np.logical_and(truth_pos, pred_pos).sum() / union)
