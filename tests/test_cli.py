@@ -76,6 +76,22 @@ def test_de_accepts_perturbations_file(dataset_path, tmp_path):
         assert [value.decode() for value in f["perturbations"][:]] == ["pertC", "pertA"]
 
 
+@pytest.mark.parametrize(
+    ("content", "message"),
+    [
+        ("# only comments\n\n", "empty"),
+        ("pertA\nmissing\n", "unknown perturbation"),
+        ("pertA\npertA\n", "duplicate perturbation"),
+    ],
+)
+def test_de_rejects_invalid_perturbations_file(dataset_path, tmp_path, content, message):
+    selected = tmp_path / "bad.txt"
+    selected.write_text(content)
+    with pytest.raises(SystemExit) as e:
+        main(["de", dataset_path, "--perturbations-file", str(selected), "--out-dir", str(tmp_path), "--quiet"])
+    assert message in str(e.value)
+
+
 def test_calibrate_rejects_score_output(dataset_path, tmp_path):
     # `score` is a scoring-mode calibrator, not selectable from `calibrate --calibrator`
     with pytest.raises(SystemExit):

@@ -106,6 +106,38 @@ def test_de_supports_cell_source_combinations(dataset_adata, target, reference):
     assert np.isfinite(result.statistic.to_numpy()).all()
 
 
+def test_de_target_and_reference_select_requested_cell_populations(dataset_adata):
+    from scperteval.blocks.de import de_ttest
+
+    prepared = prep(dataset_adata, [])
+    all_vs_ctrl = sp.de(prepared, "t-test", target="gt_all_cells", reference="control")
+    half_vs_ctrl = sp.de(prepared, "t-test", target="gt_half", reference="control")
+    all_vs_pert = sp.de(prepared, "t-test", target="gt_all_cells", reference="all_perturbed")
+
+    ctrl_cells = prepared._ds.control_cells(PREP["subsample"])
+    for pert in prepared._ds.perturbations:
+        expected_all = de_ttest(prepared._ds.cells(pert), ctrl_cells)
+        expected_half = de_ttest(prepared._ds.cells(pert, half="first"), ctrl_cells)
+        np.testing.assert_allclose(all_vs_ctrl.statistic.loc[pert].to_numpy(), expected_all.statistic)
+        np.testing.assert_allclose(all_vs_ctrl.pvalue_adj.loc[pert].to_numpy(), expected_all.pvalue_adj)
+        np.testing.assert_allclose(half_vs_ctrl.statistic.loc[pert].to_numpy(), expected_half.statistic)
+
+    assert not np.allclose(all_vs_ctrl.statistic.to_numpy(), half_vs_ctrl.statistic.to_numpy())
+    assert not np.allclose(all_vs_ctrl.statistic.to_numpy(), all_vs_pert.statistic.to_numpy())
+
+
+def test_de_accepts_per_handle_user_cell_source(dataset_adata):
+    from scperteval.blocks.de import de_ttest
+
+    ctrl_cells = np.asarray(dataset_adata[dataset_adata.obs["perturbation"] == "control"].X, dtype=np.float64)
+    custom_ref = ctrl_cells[:25]
+    prepared = sp.prepare(dataset_adata, [], sources={"custom_ref": custom_ref}, **PREP)
+    result = sp.de(prepared, "t-test", target="gt_all_cells", reference="custom_ref")
+    expected = de_ttest(prepared._ds.cells("pertA"), custom_ref)
+    np.testing.assert_allclose(result.statistic.loc["pertA"].to_numpy(), expected.statistic)
+    np.testing.assert_allclose(result.pvalue_adj.loc["pertA"].to_numpy(), expected.pvalue_adj)
+
+
 def test_de_accepts_custom_registered_cell_source(dataset_adata):
     from scperteval.sources import SOURCES
 
