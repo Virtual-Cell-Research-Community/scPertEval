@@ -25,8 +25,15 @@
 - Pure DE-recovery metrics in `scperteval.protocols.metrics`: `de_f1`, `de_macro_f1`, `de_jaccard`,
   `de_precision`, `de_recall`, `de_direction_concordance`, `de_spearman`, and
   `de_overlap_at_truth_size`.
+- Lazy top-level re-exports on `scperteval` for core experimentation entities: `Protocol`,
+  `MetricOutcome`, `PROTOCOLS`, `spaces`, and `metrics`.
 
 ### Changed
+
+- `Protocol.better` and `Protocol.perfect` now default to `None`, automatically infer their values
+  from built-in metrics in `scperteval.protocols.metrics` (including `functools.partial` wrappers),
+  and fail fast in `calibrate()` when omitted on custom user metrics instead of silently assuming
+  `better="higher", perfect=1.0`.
 
 - Sample datasets in `gs://scperteval` now use Google Cloud Storage Requester Pays and require a
   Google account and a billing-enabled Google Cloud project. See the

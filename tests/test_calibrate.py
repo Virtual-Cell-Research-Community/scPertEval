@@ -60,7 +60,7 @@ def test_undefined_raw_metric_is_not_counted_as_bds_loss(dataset_adata, cfg_fact
     def undefined(gt, candidate, ctx):
         return MetricOutcome(float("nan"), "constant_ground_truth")
 
-    protocol = Protocol("undefined", undefined, representation="centroid")
+    protocol = Protocol("undefined", undefined, representation="centroid", better="higher", perfect=1.0)
     ctx = Context(Dataset(dataset_adata, cfg_factory()), cfg_factory())
     with warnings.catch_warnings():
         warnings.simplefilter("error", RuntimeWarning)
@@ -93,7 +93,7 @@ def test_score_propagates_undefined_outcome_reason(dataset_adata, predictions_fa
 
 
 def test_drf_records_beyond_perfect_reason():
-    protocol = Protocol("bounded", lambda *_: 0.0, representation="centroid", perfect=1.0)
+    protocol = Protocol("bounded", lambda *_: 0.0, representation="centroid", better="higher", perfect=1.0)
     outcome = CALIBRATORS["drf"].per_pert({"positive": 0.8, "negative": 1.1}, protocol)
     assert np.isnan(outcome.value)
     assert outcome.undefined_reason == "negative_beyond_protocol_perfect"

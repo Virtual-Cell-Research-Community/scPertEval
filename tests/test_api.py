@@ -26,19 +26,47 @@ def prep(adata, protocols="all"):
 
 def test_public_surface():
     assert set(sp.__all__) == {
+        "PROTOCOLS",
         "DatasetDEResults",
         "EvalResult",
+        "MetricOutcome",
         "Prepared",
+        "Protocol",
         "__version__",
         "calibrate",
         "de",
+        "metrics",
         "prepare",
         "score",
+        "spaces",
         "truth_availability",
     }
     for gone in ("differential_expression", "available_protocols", "DEResults", "DEMethodResult"):
         assert not hasattr(sp, gone)
     assert sp.__version__
+    from scperteval.blocks import spaces as blocks_spaces
+    from scperteval.protocols import metrics as proto_metrics
+    from scperteval.protocols.table import PROTOCOLS as table_protocols
+    from scperteval.types import MetricOutcome, Protocol
+
+    assert sp.Protocol is Protocol
+    assert sp.MetricOutcome is MetricOutcome
+    assert sp.spaces is blocks_spaces
+    assert sp.metrics is proto_metrics
+    assert sp.PROTOCOLS is table_protocols
+
+
+def test_top_level_import_stays_lazy():
+    import subprocess
+    import sys
+
+    code = (
+        "import sys, scperteval; "
+        "_ = scperteval.__version__; "
+        "loaded = [m for m in ('anndata', 'pandas', 'sklearn', 'torch', 'scperteval.api') if m in sys.modules]; "
+        "assert not loaded, loaded"
+    )
+    subprocess.run([sys.executable, "-c", code], check=True)
 
 
 def test_de_method_literal_matches_registry():
@@ -273,16 +301,87 @@ def test_protocol_must_be_a_string(dataset_adata):
 
 
 def test_concrete_protocol_objects_are_supported(dataset_adata, predictions_factory):
-    from scperteval.protocols import metrics
-    from scperteval.types import Protocol
-
-    protocol = Protocol("external_mae", metrics.mae, representation="centroid", better="lower", perfect=0.0)
+    protocol = sp.Protocol("external_mae", sp.metrics.mae, representation="centroid")
+    assert protocol.better == "lower"
+    assert protocol.perfect == 0.0
     prepared = prep(dataset_adata, protocol)
     cal = sp.calibrate(prepared, protocol)
     assert cal.per_perturbation["protocol"].unique().tolist() == ["external_mae"]
     pred = predictions_factory(dataset_adata, kind="degraded")
     scored = sp.score(prepared, protocol, pred)
     assert scored.per_perturbation["protocol"].unique().tolist() == ["external_mae"]
+
+
+def test_builtin_metric_scale_inference_and_catalog_consistency(dataset_adata):
+    import inspect
+    from functools import partial
+
+    public_metrics = [
+        fn
+        for name, fn in inspect.getmembers(sp.metrics, inspect.isfunction)
+        if not name.startswith("_") and fn.__module__ == sp.metrics.__name__
+    ]
+    assert public_metrics
+    for fn in public_metrics:
+        scale = getattr(fn, "_scperteval_scale", None)
+        assert scale is not None, f"built-in metric {fn.__name__} missing _scperteval_scale"
+        proto = sp.Protocol(f"test_{fn.__name__}", fn, representation="centroid")
+        assert (proto.better, proto.perfect) == scale
+
+    for proto in sp.PROTOCOLS.values():
+        fn = proto.metric
+        while isinstance(fn, partial):
+            fn = fn.func
+        assert (proto.better, proto.perfect) == getattr(fn, "_scperteval_scale", None)
+
+    # Inference unwraps functools.partial and lets explicit overrides win.
+    wrapped = sp.Protocol("wmse_p", partial(sp.metrics.weighted_mse, exp=1.0), representation="centroid")
+    assert (wrapped.better, wrapped.perfect) == ("lower", 0.0)
+    de_wrapped = sp.Protocol("auroc_p", partial(sp.metrics.de_auroc, top_k=20), representation="de")
+    assert (de_wrapped.better, de_wrapped.perfect) == ("higher", 1.0)
+    overridden = sp.Protocol("override", sp.metrics.mse, representation="centroid", better="higher", perfect=2.0)
+    assert (overridden.better, overridden.perfect) == ("higher", 2.0)
+
+    # Calibrating an inferred lower-is-better metric matches the curated catalog protocol.
+    inferred_mse = sp.Protocol("my_mse", sp.metrics.mse, representation="centroid")
+    prepared = prep(dataset_adata, ["mse", inferred_mse])
+    for cal_name in ("drf", "bds"):
+        expected = sp.calibrate(prepared, "mse", calibrator=cal_name).aggregate
+        actual = sp.calibrate(prepared, inferred_mse, calibrator=cal_name).aggregate
+        assert actual == pytest.approx(expected)
+
+
+def test_custom_metric_scale_validation(dataset_adata, predictions_factory):
+    def custom_metric(gt, pred, ctx):
+        return float(np.mean(gt - pred))
+
+    proto_unset = sp.Protocol("custom_unset", custom_metric, representation="centroid")
+    assert proto_unset.better is None
+    assert proto_unset.perfect is None
+
+    # score() and truth_availability() work without better/perfect.
+    prepared = prep(dataset_adata, [proto_unset])
+    pred = predictions_factory(dataset_adata, kind="degraded")
+    assert np.isfinite(sp.score(prepared, proto_unset, pred).aggregate["mean"])
+    assert sp.truth_availability(prepared, [proto_unset])["ground_truth_defined"].all()
+
+    # calibrate() fails fast for missing scale metadata.
+    with pytest.raises(ValueError, match=r"better=.*perfect="):
+        sp.calibrate(prepared, proto_unset, calibrator="drf")
+    with pytest.raises(ValueError, match="better="):
+        sp.calibrate(prepared, proto_unset, calibrator="bds")
+
+    # better-only custom protocol can run BDS, but DRF still requires perfect.
+    proto_bds = sp.Protocol("custom_bds", custom_metric, representation="centroid", better="higher")
+    assert 0.0 <= sp.calibrate(prepared, proto_bds, calibrator="bds").aggregate["bds"] <= 1.0
+    with pytest.raises(ValueError, match="perfect="):
+        sp.calibrate(prepared, proto_bds, calibrator="drf")
+
+    # Invalid better / non-finite perfect fail eagerly on Protocol construction.
+    with pytest.raises(ValueError, match="better must be"):
+        sp.Protocol("bad_dir", custom_metric, representation="centroid", better="up")
+    with pytest.raises(ValueError, match="perfect must be finite"):
+        sp.Protocol("bad_perf", custom_metric, representation="centroid", better="higher", perfect=float("nan"))
 
 
 def test_concrete_protocol_cannot_shadow_curated_name(dataset_adata):
