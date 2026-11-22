@@ -36,9 +36,16 @@
   DE labels (building on #39 by @psl-schaefer).
 - Empty per-perturbation feature spaces raise `UndefinedSpace` (a `ValueError` subclass) that the
   runner records as `NaN` with an `undefined_reason` rather than aborting the run.
+- Unified all `de_*` metrics (`de_auprc`, `de_auroc`, `de_overlap`, and the DE-set metrics) on
+  `rank_by="significance"` by default (matching `spaces.degs()`), while keeping
+  `rank_by="absolute_effect"` explicitly selectable.
 
 ### Fixed
 
+- `_de_scores(..., rank_by="significance")` now assigns tie-preserving dense ranks over
+  `(pvalue_adj, |statistic|)` rather than breaking ties by gene index, keeping `de_auroc` and
+  `de_auprc` invariant to gene column order and yielding exact chance performance on flat
+  predictions.
 - Undefined (`NaN`) raw metric values now propagate through DRF and BDS as `NaN` with an explicit
   `undefined_reason` instead of being counted as BDS losses (reported and fixed in #39 by
   @psl-schaefer).

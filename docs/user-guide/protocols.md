@@ -85,7 +85,7 @@ A reference-centred profile — the `centering` source subtracted off — is wha
 |---|---|
 | `centroid` | a 1-D pseudobulk vector (one value per gene) |
 | `population` | a `(cells × genes)` matrix |
-| `de` | a `PerturbationDEResult` (for the ground truth) / per-gene `\|statistic\|` ranking (for a prediction) |
+| `de` | a `PerturbationDEResult` for both ground truth and candidate |
 
 **`scope`** is the independent companion axis — *how many* perturbations the metric sees at once:
 

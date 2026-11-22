@@ -179,3 +179,61 @@ def test_de_protocol_rejects_transform_space(dataset_adata):
     prep = sp.prepare(dataset_adata, [], subsample=400, seed=0, min_cells=10, workers=1)
     with pytest.raises(TypeError, match="gene-subset space"):
         sp.truth_availability(prep, bad)
+
+
+def test_all_de_metrics_default_to_significance_ranking():
+    import inspect
+
+    de_fns = [
+        fn
+        for name, fn in inspect.getmembers(M, inspect.isfunction)
+        if name.startswith("de_") and fn.__module__ == M.__name__
+    ]
+    assert len(de_fns) == 11
+    for fn in de_fns:
+        assert inspect.signature(fn).parameters["rank_by"].default == "significance", fn.__name__
+    assert inspect.signature(spaces.degs).parameters["rank_by"].default == "significance"
+
+
+def test_significance_ranking_preserves_ties_and_column_order_invariance():
+    # Flat prediction (all genes tied at stat=0, padj=1) must score exact chance regardless of gene order.
+    truth_front = _de([5.0, -4.0, 0.1, -0.2, 0.0], [0.001, 0.01, 0.8, 0.9, 1.0])
+    truth_back = _de([0.1, -0.2, 0.0, 5.0, -4.0], [0.8, 0.9, 1.0, 0.001, 0.01])
+    flat = _de(np.zeros(5), np.ones(5))
+    for truth in (truth_front, truth_back):
+        assert M.de_auroc(truth, flat, None, rank_by="significance") == pytest.approx(0.5)
+        assert M.de_auprc(truth, flat, None, rank_by="significance") == pytest.approx(2.0 / 5.0)
+
+    # Permuting gene order with underflow (padj=0), BH plateau (padj=1), and exact ties stays invariant.
+    gt_stat = np.array([10.0, -6.0, 3.0, 0.5, 0.0, 0.0, -0.1, 0.2])
+    gt_padj = np.array([0.0, 0.0, 0.02, 0.4, 1.0, 1.0, 1.0, 0.8])
+    pr_stat = np.array([12.0, -4.0, 1.0, 2.0, 0.0, 0.0, -0.5, 0.0])
+    pr_padj = np.array([0.0, 0.0, 0.04, 0.5, 1.0, 1.0, 1.0, 1.0])
+    truth = _de(gt_stat, gt_padj)
+    pred = _de(pr_stat, pr_padj)
+    base_auroc = M.de_auroc(truth, pred, None)
+    base_auprc = M.de_auprc(truth, pred, None)
+
+    # Underflowed padj=0 genes are still ordered by |statistic| (gene 0 > gene 1), and padj=1 plateau
+    # breaks non-zero |statistic| (gene 6 > tied zero genes 4, 5, 7).
+    scores = M._de_scores(pred, rank_by="significance")
+    assert scores[0] > scores[1] > scores[2] > scores[3] > scores[6] > scores[4]
+    assert scores[4] == scores[5] == scores[7]
+
+    rng = np.random.default_rng(7)
+    for _ in range(10):
+        perm = rng.permutation(len(gt_stat))
+        t_perm = _de(gt_stat[perm], gt_padj[perm])
+        p_perm = _de(pr_stat[perm], pr_padj[perm])
+        assert M.de_auroc(t_perm, p_perm, None) == pytest.approx(base_auroc)
+        assert M.de_auprc(t_perm, p_perm, None) == pytest.approx(base_auprc)
+
+
+def test_rank_by_absolute_effect_remains_selectable():
+    # Gene 0 is significant with moderate |stat|; gene 2 is non-significant with large |stat|.
+    truth = _de([3.0, 0.2, 0.1, -0.1], [0.001, 0.8, 0.9, 0.9])
+    pred = _de([3.0, 0.2, 9.0, -0.1], [0.001, 0.8, 0.5, 0.9])
+    assert M.de_auroc(truth, pred, None, rank_by="significance") == pytest.approx(1.0)
+    assert M.de_auroc(truth, pred, None, rank_by="absolute_effect") == pytest.approx(2.0 / 3.0)
+    assert M.de_overlap(truth, pred, None, k=1, rank_by="significance") == pytest.approx(1.0)
+    assert M.de_overlap(truth, pred, None, k=1, rank_by="absolute_effect") == pytest.approx(0.0)
