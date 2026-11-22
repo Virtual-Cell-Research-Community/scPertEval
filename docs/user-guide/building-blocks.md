@@ -108,8 +108,9 @@ hvg_pca = spaces.pca(50).on(spaces.hvg(2000))
 ### Spaces that aren't gene subsets
 
 `pca_<k>` replaces the gene axis with components instead of narrowing it, so it has no gene
-selection and can't be composed. Use `@SPACES.transform`, whose rule takes the cells and returns
-the finished array:
+selection and can't be combined with set operations (`|` / `&` / `-`) or `SPACES.combine_subsets`
+(in Python, restrict a transform to a dataset-wide subset via `.on(subset)` as shown above). Use
+`@SPACES.transform`, whose rule takes the cells and returns the finished array:
 
 ```python
 @SPACES.transform("pca", default=50, precompute=pca_for, description="top {v} principal components")

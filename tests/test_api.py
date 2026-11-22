@@ -323,32 +323,136 @@ def test_builtin_metric_scale_inference_and_catalog_consistency(dataset_adata):
     ]
     assert public_metrics
     for fn in public_metrics:
-        scale = getattr(fn, "_scperteval_scale", None)
-        assert scale is not None, f"built-in metric {fn.__name__} missing _scperteval_scale"
-        proto = sp.Protocol(f"test_{fn.__name__}", fn, representation="centroid")
-        assert (proto.better, proto.perfect) == scale
+        meta = getattr(fn, "_scperteval_metric", None)
+        assert meta is not None, f"built-in metric {fn.__name__} missing _scperteval_metric"
+        proto = sp.Protocol(f"test_{fn.__name__}", fn)
+        assert (proto.representation, proto.scope, proto.better, proto.perfect) == meta
 
     for proto in sp.PROTOCOLS.values():
         fn = proto.metric
         while isinstance(fn, partial):
             fn = fn.func
-        assert (proto.better, proto.perfect) == getattr(fn, "_scperteval_scale", None)
+        assert (proto.representation, proto.scope, proto.better, proto.perfect) == getattr(
+            fn, "_scperteval_metric", None
+        )
 
-    # Inference unwraps functools.partial and lets explicit overrides win.
-    wrapped = sp.Protocol("wmse_p", partial(sp.metrics.weighted_mse, exp=1.0), representation="centroid")
-    assert (wrapped.better, wrapped.perfect) == ("lower", 0.0)
-    de_wrapped = sp.Protocol("auroc_p", partial(sp.metrics.de_auroc, top_k=20), representation="de")
-    assert (de_wrapped.better, de_wrapped.perfect) == ("higher", 1.0)
-    overridden = sp.Protocol("override", sp.metrics.mse, representation="centroid", better="higher", perfect=2.0)
+    # Inference unwraps functools.partial and lets explicit better/perfect overrides win.
+    wrapped = sp.Protocol("wmse_p", partial(sp.metrics.weighted_mse, exp=1.0))
+    assert (wrapped.representation, wrapped.scope, wrapped.better, wrapped.perfect) == (
+        "centroid",
+        "perturbation",
+        "lower",
+        0.0,
+    )
+    de_wrapped = sp.Protocol("auroc_p", partial(sp.metrics.de_auroc, top_k=20))
+    assert (de_wrapped.representation, de_wrapped.scope, de_wrapped.better, de_wrapped.perfect) == (
+        "de",
+        "perturbation",
+        "higher",
+        1.0,
+    )
+    assert de_wrapped.reference == "all_perturbed"
+    nir_inferred = sp.Protocol("nir_p", sp.metrics.nir)
+    assert (nir_inferred.representation, nir_inferred.scope, nir_inferred.better, nir_inferred.perfect) == (
+        "centroid",
+        "dataset",
+        "higher",
+        1.0,
+    )
+    overridden = sp.Protocol("override", sp.metrics.mse, better="higher", perfect=2.0)
     assert (overridden.better, overridden.perfect) == ("higher", 2.0)
 
     # Calibrating an inferred lower-is-better metric matches the curated catalog protocol.
-    inferred_mse = sp.Protocol("my_mse", sp.metrics.mse, representation="centroid")
+    inferred_mse = sp.Protocol("my_mse", sp.metrics.mse)
     prepared = prep(dataset_adata, ["mse", inferred_mse])
     for cal_name in ("drf", "bds"):
         expected = sp.calibrate(prepared, "mse", calibrator=cal_name).aggregate
         actual = sp.calibrate(prepared, inferred_mse, calibrator=cal_name).aggregate
         assert actual == pytest.approx(expected)
+
+
+def test_protocol_contract_validation_and_warnings():
+    def custom(gt, pred, ctx):
+        return 0.0
+
+    # Custom metrics require representation explicitly; typos in representation/scope fail fast.
+    with pytest.raises(ValueError, match="representation is required"):
+        sp.Protocol("missing_rep", custom)
+    with pytest.raises(ValueError, match="representation must be"):
+        sp.Protocol("bad_rep", custom, representation="pseudobulk")
+    with pytest.raises(ValueError, match="scope must be"):
+        sp.Protocol("bad_scope", custom, representation="centroid", scope="datasets")
+
+    # Built-in metrics reject contradictory representation or scope.
+    with pytest.raises(ValueError, match="requires representation='centroid'"):
+        sp.Protocol("pearson_pop", sp.metrics.pearson, representation="population")
+    with pytest.raises(ValueError, match="requires representation='population'"):
+        sp.Protocol("edist_cent", sp.metrics.energy_distance, representation="centroid")
+    with pytest.raises(ValueError, match="requires scope='dataset'"):
+        sp.Protocol("nir_pert", sp.metrics.nir, scope="perturbation")
+
+    # Representation-specific fields fail fast when misplaced.
+    with pytest.raises(ValueError, match=r"centering=.*only applies to representation='centroid'"):
+        sp.Protocol("edist_center", sp.metrics.energy_distance, centering="control_mean")
+    with pytest.raises(ValueError, match=r"centering=.*only applies to representation='centroid'"):
+        sp.Protocol("de_center", sp.metrics.de_auroc, centering="control_mean")
+    with pytest.raises(ValueError, match="reference/neg_reference only apply to representation='de'"):
+        sp.Protocol("pearson_ref", sp.metrics.pearson, space=sp.spaces.degs(top_k=10), reference="control")
+    with pytest.raises(ValueError, match="reference/neg_reference only apply to representation='de'"):
+        sp.Protocol("edist_ref", sp.metrics.energy_distance, reference="control")
+
+    # Mismatched DE reference between space and Protocol warns cleanly.
+    with pytest.warns(UserWarning, match="differs from Protocol.reference"):
+        sp.Protocol("de_mismatch", sp.metrics.de_spearman, space=sp.spaces.top(20), reference="control")
+
+
+def test_smart_calibration_defaults_and_self_cancellation_guards(dataset_adata):
+    # 1. Centered on all_perturbed_mean -> auto-picks control_mean negative, matching pearson_pert.
+    pert_proto = sp.Protocol("my_pearson_pert", sp.metrics.pearson, centering="all_perturbed_mean")
+    # 2. Dataset-scope nir -> auto-picks global_mean negative, matching nir.
+    nir_proto = sp.Protocol("my_nir", sp.metrics.nir)
+    # 3. DE with default reference="all_perturbed" -> auto-uses hybrid neg_reference="control", matching de_auprc.
+    de_proto = sp.Protocol("my_de_auprc", sp.metrics.de_auprc)
+
+    prepared = prep(dataset_adata, ["pearson_pert", pert_proto, "nir", nir_proto, "de_auprc", de_proto])
+    assert sp.calibrate(prepared, pert_proto).aggregate == pytest.approx(
+        sp.calibrate(prepared, "pearson_pert").aggregate
+    )
+    assert sp.calibrate(prepared, nir_proto).aggregate == pytest.approx(sp.calibrate(prepared, "nir").aggregate)
+    assert sp.calibrate(prepared, de_proto).aggregate == pytest.approx(sp.calibrate(prepared, "de_auprc").aggregate)
+
+    # Explicit self-canceling negative controls fail fast.
+    ctrl_centered = sp.Protocol("my_pearson_ctrl", sp.metrics.pearson, centering="control_mean")
+    with pytest.raises(ValueError, match="cancels with centering"):
+        sp.calibrate(prepared, ctrl_centered, negative="control_mean")
+    with pytest.raises(ValueError, match="cancels with centering"):
+        sp.calibrate(prepared, pert_proto, negative="all_perturbed_mean")
+
+    de_ctrl = sp.Protocol("my_de_ctrl", sp.metrics.de_f1, reference="control")
+    assert np.isfinite(sp.calibrate(prepared, de_ctrl).aggregate["mean"])
+    with pytest.raises(ValueError, match="cannot be tested against the same reference"):
+        sp.calibrate(prepared, de_ctrl, negative="control")
+
+
+def test_weighted_metrics_support_subset_spaces_and_reject_transforms(dataset_adata, predictions_factory):
+    from functools import partial
+
+    pred = predictions_factory(dataset_adata, kind="degraded")
+    hvg_space = sp.spaces.hvg(20)
+    for name, fn in (
+        ("wmse_hvg", partial(sp.metrics.weighted_mse, exp=2.0, reference="control")),
+        ("wpearson_hvg", partial(sp.metrics.weighted_pearson, exp=2.0)),
+        ("wr2_hvg", partial(sp.metrics.weighted_r2, exp=2.0)),
+    ):
+        proto = sp.Protocol(name, fn, space=hvg_space)
+        prepared = prep(dataset_adata, [proto])
+        assert np.isfinite(sp.score(prepared, proto, pred).aggregate["mean"])
+        assert np.isfinite(sp.calibrate(prepared, proto).aggregate["mean"])
+
+    bad_pca = sp.Protocol("wmse_pca", sp.metrics.weighted_mse, space=sp.spaces.pca(5))
+    prepared_pca = prep(dataset_adata, [bad_pca])
+    with pytest.raises(TypeError, match="gene-subset space"):
+        sp.score(prepared_pca, bad_pca, pred)
 
 
 def test_custom_metric_scale_validation(dataset_adata, predictions_factory):

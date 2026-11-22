@@ -71,6 +71,12 @@ def test_de_auroc_reports_single_ground_truth_class():
         outcome = M.de_auroc(res, res, None)
         assert isinstance(outcome, MetricOutcome)
         assert outcome.undefined_reason == "single_ground_truth_class"
+    # Degenerate all-positive universes must never silently score 1.0 on ranking/macro metrics.
+    for metric in (M.de_auprc, M.de_macro_f1, M.de_overlap_at_truth_size):
+        outcome = metric(all_pos, all_pos, None)
+        assert isinstance(outcome, MetricOutcome)
+        assert np.isnan(outcome.value)
+        assert outcome.undefined_reason == "single_ground_truth_class"
 
 
 def test_de_spearman_reports_constant_ground_truth_and_handles_constant_prediction():

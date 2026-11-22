@@ -110,6 +110,15 @@ class Context:
     def current_pert(self, value):
         self._local.pert = value
 
+    @property
+    def current_space(self):
+        """The feature space of the protocol the current worker thread is evaluating."""
+        return getattr(self._local, "space", None)
+
+    @current_space.setter
+    def current_space(self, value):
+        self._local.space = value
+
     # -- source resolution: per-handle user sources first, else the global registry ----
 
     def source(self, name: str) -> Callable:
@@ -195,7 +204,7 @@ class Context:
         if not isinstance(sp, SubsetSpace):
             raise TypeError(f"DE protocol {p.name!r} requires a gene-subset space, got {p.space!r}")
         is_negative = source == self.candidates.get("negative")
-        reference = p.neg_reference if (is_negative and p.neg_reference) else p.reference
+        reference = p.effective_neg_reference(source) if is_negative else (p.reference or "all_perturbed")
         res = self.de(pert, source, reference)
         keep = sp.select(self, pert)
         if isinstance(keep, slice) and keep == slice(None):
