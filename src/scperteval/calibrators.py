@@ -11,7 +11,27 @@ import numpy as np
 from .types import Calibrator, MetricOutcome
 
 
+def _validate_drf(p) -> None:
+    missing = []
+    if p.better is None:
+        missing.append("better=('higher' | 'lower')")
+    if p.perfect is None:
+        missing.append("perfect=<float>")
+    if missing:
+        raise ValueError(
+            f"Protocol {p.name!r} cannot be calibrated with 'drf': specify {' and '.join(missing)} on Protocol(...)."
+        )
+
+
+def _validate_bds(p) -> None:
+    if p.better is None:
+        raise ValueError(
+            f"Protocol {p.name!r} cannot be calibrated with 'bds': specify better=('higher' | 'lower') on Protocol(...)."
+        )
+
+
 def _drf_per_pert(raws, p):
+    _validate_drf(p)
     pos, neg = raws["positive"], raws["negative"]
     if not np.isfinite(pos) or not np.isfinite(neg):
         return MetricOutcome(float("nan"), "non_finite_raw_metric")
@@ -26,6 +46,7 @@ def _drf_per_pert(raws, p):
 
 
 def _bds_per_pert(raws, p):
+    _validate_bds(p)
     pos, neg = raws["positive"], raws["negative"]
     if not np.isfinite(pos) or not np.isfinite(neg):
         return MetricOutcome(float("nan"), "non_finite_raw_metric")
@@ -63,6 +84,7 @@ CALIBRATORS = {
         _drf_per_pert,
         _mean_median,
         description="Dynamic Range Fraction — mean/median over perturbations (Miller et al. 2025)",
+        validate=_validate_drf,
     ),
     "bds": Calibrator(
         "bds",
@@ -70,6 +92,7 @@ CALIBRATORS = {
         _bds_per_pert,
         _mean_bds,
         description="Bound Discrimination Score — fraction of perturbations the positive control wins (SBB 2026)",
+        validate=_validate_bds,
     ),
     "score": Calibrator(
         "score",

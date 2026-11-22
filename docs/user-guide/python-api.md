@@ -52,28 +52,31 @@ c = sp.de(prep, "t-test")
 
 Python callers can pass concrete {class}`~scperteval.types.Protocol` objects and composable
 {mod}`scperteval.blocks.spaces` objects directly to `prepare()`, `calibrate()`, `score()`, and
-`truth_availability()` without mutating the curated CLI catalog:
+`truth_availability()` without mutating the curated CLI catalog (`Protocol`, `MetricOutcome`,
+`PROTOCOLS`, `spaces`, and `metrics` are all lazily re-exported at the package root):
 
 ```python
 from functools import partial
-from scperteval.blocks import spaces
-from scperteval.protocols import metrics
-from scperteval.types import Protocol
+import scperteval as sp
 
-deg50 = spaces.degs(padj=0.05, top_k=50, rank_by="significance", reference="control") - spaces.own_target()
-proto = Protocol("pearson_deg50_no_target", metrics.pearson, "centroid", space=deg50)
+deg50 = sp.spaces.degs(padj=0.05, top_k=50, rank_by="significance", reference="control") - sp.spaces.own_target()
+proto = sp.Protocol("pearson_deg50_no_target", sp.metrics.pearson, "centroid", space=deg50)
 
-hvg_pca = spaces.pca(50).on(spaces.hvg(2000))
-edist = Protocol("edist_hvg_pca", metrics.energy_distance, "population", space=hvg_pca, better="lower", perfect=0.0)
+hvg_pca = sp.spaces.pca(50).on(sp.spaces.hvg(2000))
+edist = sp.Protocol("edist_hvg_pca", sp.metrics.energy_distance, "population", space=hvg_pca)
 
-de_f1 = Protocol(
+de_f1 = sp.Protocol(
     "de_f1_no_target",
-    partial(metrics.de_f1, padj=0.05),
+    partial(sp.metrics.de_f1, padj=0.05),
     "de",
-    space=spaces.full() - spaces.own_target(),
+    space=sp.spaces.full() - sp.spaces.own_target(),
     reference="control",
 )
 ```
+
+Built-in metrics in `sp.metrics` (including `functools.partial` wrappers) automatically populate
+`Protocol.better` and `Protocol.perfect`. Custom user metrics may omit both for `score()` and
+`truth_availability()`, while `calibrate()` requires `better` (and `perfect` for DRF).
 
 Subset spaces compose with `|` (union), `&` (intersection), and `-` (difference); transforms
 restrict to a dataset-wide subset via `.on(subset)` (e.g. `spaces.pca(50).on(spaces.hvg(2000))`). If perturbation labels are not gene

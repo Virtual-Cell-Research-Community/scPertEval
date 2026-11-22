@@ -126,7 +126,10 @@ class Protocol:
     Together they let the calibrator orient the score: DRF measures how far the positive
     control moves from the negative-control floor toward ``perfect`` in the ``better``
     direction, and BDS counts the perturbations where the positive control is ``better``
-    than the negative.
+    than the negative. When omitted, built-in metrics in :mod:`scperteval.protocols.metrics`
+    (including ``functools.partial`` wrappers) supply their intrinsic ``better`` / ``perfect``
+    defaults automatically. Custom metrics may omit both for ``score()``, while ``calibrate()``
+    requires ``better`` (and ``perfect`` for DRF).
     """
 
     #: Protocol identifier used on the CLI (``-p name``) and in output CSVs.
@@ -147,10 +150,10 @@ class Protocol:
     reference: str = "all_perturbed"
     #: Reference for the negative-control DE computation; ``None`` uses ``reference``.
     neg_reference: str | None = None
-    #: ``"higher"`` or ``"lower"`` — which direction improves the score.
-    better: str = "higher"
-    #: Score a flawless prediction attains (e.g. 1.0 for correlations, 0.0 for errors).
-    perfect: float = 1.0
+    #: ``"higher"`` or ``"lower"`` — which direction improves the score; inferred for built-in metrics.
+    better: str | None = None
+    #: Score a flawless prediction attains (e.g. 1.0 for correlations, 0.0 for errors); inferred for built-in metrics.
+    perfect: float | None = None
     #: Declared default positive control; ``None`` uses the representation's generic default.
     default_positive: str | None = None
     #: Declared default negative control; ``None`` uses the representation's generic default.
@@ -163,6 +166,23 @@ class Protocol:
     #: for protocols that run on the base install. Bulk selectors (``all``, a group) skip
     #: protocols whose extra is not installed; naming one explicitly is an error.
     requires_extra: str | None = None
+
+    def __post_init__(self) -> None:
+        if self.better is None or self.perfect is None:
+            fn = self.metric
+            while isinstance(fn, partial):
+                fn = fn.func
+            scale = getattr(fn, "_scperteval_scale", None)
+            if scale is not None:
+                default_better, default_perfect = scale
+                if self.better is None:
+                    object.__setattr__(self, "better", default_better)
+                if self.perfect is None:
+                    object.__setattr__(self, "perfect", default_perfect)
+        if self.better is not None and self.better not in ("higher", "lower"):
+            raise ValueError(f"Protocol {self.name!r}: better must be 'higher' or 'lower', got {self.better!r}")
+        if self.perfect is not None and not np.isfinite(self.perfect):
+            raise ValueError(f"Protocol {self.name!r}: perfect must be finite, got {self.perfect!r}")
 
     @property
     def parameterised(self) -> bool:
@@ -195,3 +215,5 @@ class Calibrator:
     aggregate: Callable
     #: Human-readable description shown by ``scperteval list calibrators``.
     description: str = ""
+    #: Optional ``(protocol: Protocol) -> None`` pre-run check (e.g. requiring ``better``/``perfect``).
+    validate: Callable[[Protocol], None] | None = None

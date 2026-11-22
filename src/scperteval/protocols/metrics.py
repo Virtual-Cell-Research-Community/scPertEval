@@ -98,6 +98,16 @@ def _doc(**subs):
     return deco
 
 
+def _scale(better: str, perfect: float):
+    """Attach intrinsic ``(better, perfect)`` scale metadata to a built-in metric."""
+
+    def deco(fn):
+        fn._scperteval_scale = (better, perfect)
+        return fn
+
+    return deco
+
+
 def _sq_dists(X, Y):
     """Pairwise squared euclidean distances via ||x||^2 + ||y||^2 - 2 x.y.
 
@@ -117,6 +127,7 @@ def _within_unbiased(sq, n):
     return float(np.sqrt(sq).sum() / (n * (n - 1)))
 
 
+@_scale("higher", 1.0)
 @_doc(params=_CENTROID)
 def pearson(gt, prediction, ctx):
     r"""Pearson correlation between pseudobulk profiles.
@@ -138,6 +149,7 @@ def pearson(gt, prediction, ctx):
     return float(np.corrcoef(gt, prediction)[0, 1])
 
 
+@_scale("higher", 1.0)
 @_doc(params=_CENTROID)
 def spearman(gt, prediction, ctx):
     """Spearman rank correlation between pseudobulk profiles.
@@ -160,6 +172,7 @@ def spearman(gt, prediction, ctx):
     return float(result.statistic)
 
 
+@_scale("higher", 1.0)
 @_doc(params=_CENTROID)
 def cosine(gt, prediction, ctx):
     """Cosine similarity between pseudobulk profiles.
@@ -183,6 +196,7 @@ def cosine(gt, prediction, ctx):
     return float(np.dot(gt, prediction) / (gt_norm * pred_norm))
 
 
+@_scale("higher", 1.0)
 @_doc(params=_CENTROID)
 def squared_pearson(gt, prediction, ctx):
     """Squared Pearson correlation between pseudobulk profiles.
@@ -204,6 +218,7 @@ def squared_pearson(gt, prediction, ctx):
     return value * value
 
 
+@_scale("higher", 1.0)
 @_doc(params=_CENTROID)
 def r2(gt, prediction, ctx):
     r"""Coefficient of determination between pseudobulk profiles.
@@ -233,6 +248,7 @@ def r2(gt, prediction, ctx):
     return float(r2_score(gt, prediction))
 
 
+@_scale("higher", 1.0)
 @_doc(params=_CENTROID)
 def clipped_r2(gt, prediction, ctx):
     """Coefficient of determination clipped to ``[0, 1]``.
@@ -249,6 +265,7 @@ def clipped_r2(gt, prediction, ctx):
     return float(np.clip(r2(gt, prediction, ctx), 0.0, 1.0))
 
 
+@_scale("higher", 1.0)
 @_doc(params=_CENTROID)
 def explained_variance(gt, prediction, ctx):
     """Explained-variance regression score between pseudobulk profiles.
@@ -265,6 +282,7 @@ def explained_variance(gt, prediction, ctx):
     return float(explained_variance_score(gt, prediction))
 
 
+@_scale("lower", 0.0)
 @_doc(params=_CENTROID)
 def mse(gt, prediction, ctx):
     r"""Mean squared error between pseudobulk profiles.
@@ -285,6 +303,7 @@ def mse(gt, prediction, ctx):
     return float(np.mean((gt - prediction) ** 2))
 
 
+@_scale("lower", 0.0)
 @_doc(params=_CENTROID)
 def mae(gt, prediction, ctx):
     """Mean absolute error between pseudobulk profiles.
@@ -301,6 +320,7 @@ def mae(gt, prediction, ctx):
     return float(np.mean(np.abs(gt - prediction)))
 
 
+@_scale("lower", 0.0)
 @_doc(params=_CENTROID)
 def l2(gt, prediction, ctx):
     r"""Euclidean distance between pseudobulk profiles.
@@ -321,6 +341,7 @@ def l2(gt, prediction, ctx):
     return float(np.sqrt(np.sum((gt - prediction) ** 2)))
 
 
+@_scale("lower", 0.0)
 @_doc(params=_CENTROID_W)
 def weighted_mse(gt, prediction, ctx, exp=2.0):
     r"""MSE weighted by ground-truth effect size raised to ``exp``.
@@ -353,6 +374,7 @@ def weighted_mse(gt, prediction, ctx, exp=2.0):
     return float(np.sum(w * (gt - prediction) ** 2))
 
 
+@_scale("higher", 1.0)
 @_doc(params=_CENTROID_W)
 def weighted_pearson(gt, prediction, ctx, exp=2.0):
     r"""Pearson correlation weighted by ground-truth effect size raised to ``exp``.
@@ -392,6 +414,7 @@ def weighted_pearson(gt, prediction, ctx, exp=2.0):
     return float(np.sum(w * d_gt * d_pred) / np.sqrt(var_gt * var_pred))
 
 
+@_scale("higher", 1.0)
 @_doc(params=_CENTROID_W)
 def weighted_r2(gt, prediction, ctx, exp=2.0):
     r"""Coefficient of determination weighted by ground-truth effect size raised to ``exp``.
@@ -419,6 +442,7 @@ def weighted_r2(gt, prediction, ctx, exp=2.0):
     return float(r2_score(gt, prediction, sample_weight=w))
 
 
+@_scale("lower", 0.0)
 @_doc(params=_POPULATION)
 def energy_distance(gt, prediction, ctx):
     r"""Székely–Rizzo energy distance with bias-corrected within-population terms.
@@ -450,6 +474,7 @@ def energy_distance(gt, prediction, ctx):
     return float(2.0 * cross - xx - yy)
 
 
+@_scale("lower", 0.0)
 @_doc(params=_POPULATION)
 def unbiased_mmd_median(gt, prediction, ctx):
     r"""Unbiased RBF-MMD² with median-heuristic bandwidth (Gretton 2012).
@@ -497,6 +522,7 @@ def unbiased_mmd_median(gt, prediction, ctx):
 _geomloss_cache: dict = {}
 
 
+@_scale("lower", 0.0)
 @_doc(params=_POPULATION)
 def sinkhorn_w2(gt, prediction, ctx, blur=0.05):
     r"""Debiased Sinkhorn 2-Wasserstein distance (geomloss, p=2).
@@ -545,6 +571,7 @@ def sinkhorn_w2(gt, prediction, ctx, blur=0.05):
     return float(np.sqrt(max(2.0 * val, 0.0)))
 
 
+@_scale("lower", 0.0)
 @_doc(params=_DATASET)
 def rank_retrieval(gt, prediction, ctx, transpose=False):
     r"""Cross-perturbation retrieval rank — dataset-scope metric, lower is better.
@@ -583,6 +610,7 @@ def rank_retrieval(gt, prediction, ctx, transpose=False):
     return np.diag(ranks).astype(np.float64) / max(n - 1, 1)
 
 
+@_scale("higher", 1.0)
 @_doc(params=_DATASET)
 def nir(gt, prediction, ctx):
     r"""Normalized Inverse Rank — dataset-scope, higher is better.
@@ -710,6 +738,7 @@ def _binary_f1(truth: np.ndarray, prediction: np.ndarray, *, positive: bool = Tr
     return 0.0 if denom == 0 else (2 * tp) / denom
 
 
+@_scale("higher", 1.0)
 @_doc(params=_DE)
 def de_auprc(
     gt, prediction, ctx, *, padj: float | None = 0.05, top_k: int | None = None, rank_by: str = "absolute_effect"
@@ -742,6 +771,7 @@ def de_auprc(
     return float(average_precision_score(labels, scores))
 
 
+@_scale("higher", 1.0)
 @_doc(params=_DE)
 def de_auroc(
     gt, prediction, ctx, *, padj: float | None = 0.05, top_k: int | None = None, rank_by: str = "absolute_effect"
@@ -774,6 +804,7 @@ def de_auroc(
     return float(roc_auc_score(labels, scores))
 
 
+@_scale("higher", 1.0)
 @_doc(params=_DE)
 def de_overlap(gt, prediction, ctx, k: int = 50, *, rank_by: str = "absolute_effect"):
     r"""Top-k overlap between ground-truth and predicted DE gene rankings.
@@ -811,6 +842,7 @@ def de_overlap(gt, prediction, ctx, k: int = 50, *, rank_by: str = "absolute_eff
     return float(np.logical_and(top_truth, top_pred).sum() / eff_k)
 
 
+@_scale("higher", 1.0)
 @_doc(params=_DE)
 def de_overlap_at_truth_size(
     gt, prediction, ctx, *, padj: float | None = 0.05, top_k: int | None = None, rank_by: str = "significance"
@@ -827,6 +859,7 @@ def de_overlap_at_truth_size(
     return float(np.logical_and(truth_pos, pred_top).sum() / n)
 
 
+@_scale("higher", 1.0)
 @_doc(params=_DE)
 def de_direction_concordance(
     gt, prediction, ctx, *, padj: float | None = 0.05, top_k: int | None = None, rank_by: str = "significance"
@@ -843,6 +876,7 @@ def de_direction_concordance(
     return float(np.mean(np.sign(t_stat[truth_pos]) == np.sign(p_stat[truth_pos])))
 
 
+@_scale("higher", 1.0)
 @_doc(params=_DE)
 def de_spearman(
     gt,
@@ -878,6 +912,7 @@ def de_spearman(
     return float(result.statistic)
 
 
+@_scale("higher", 1.0)
 @_doc(params=_DE)
 def de_recall(
     gt, prediction, ctx, *, padj: float | None = 0.05, top_k: int | None = None, rank_by: str = "significance"
@@ -893,6 +928,7 @@ def de_recall(
     return float(np.logical_and(truth_pos, pred_pos).sum() / truth_pos.sum())
 
 
+@_scale("higher", 1.0)
 @_doc(params=_DE)
 def de_precision(
     gt, prediction, ctx, *, padj: float | None = 0.05, top_k: int | None = None, rank_by: str = "significance"
@@ -911,6 +947,7 @@ def de_precision(
     return float(np.logical_and(truth_pos, pred_pos).sum() / predicted)
 
 
+@_scale("higher", 1.0)
 @_doc(params=_DE)
 def de_f1(gt, prediction, ctx, *, padj: float | None = 0.05, top_k: int | None = None, rank_by: str = "significance"):
     """Binary F1 score of predicted positive DEGs against ground-truth positive DEGs."""
@@ -924,6 +961,7 @@ def de_f1(gt, prediction, ctx, *, padj: float | None = 0.05, top_k: int | None =
     return _binary_f1(truth_pos, pred_pos)
 
 
+@_scale("higher", 1.0)
 @_doc(params=_DE)
 def de_macro_f1(
     gt, prediction, ctx, *, padj: float | None = 0.05, top_k: int | None = None, rank_by: str = "significance"
@@ -939,6 +977,7 @@ def de_macro_f1(
     return (_binary_f1(truth_pos, pred_pos, positive=True) + _binary_f1(truth_pos, pred_pos, positive=False)) / 2.0
 
 
+@_scale("higher", 1.0)
 @_doc(params=_DE)
 def de_jaccard(
     gt, prediction, ctx, *, padj: float | None = 0.05, top_k: int | None = None, rank_by: str = "significance"

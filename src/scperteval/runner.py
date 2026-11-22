@@ -67,6 +67,8 @@ def run_protocol(p: Protocol, ctx, calibrator: Calibrator):
     seconds : float
         Wall-clock time for this protocol.
     """
+    if calibrator.validate is not None:
+        calibrator.validate(p)
     candidates = _resolve_candidates(p, ctx.cfg)
     needed = {name: candidates[name] for name in calibrator.requires}
     _check_sources(p, needed, ctx)
