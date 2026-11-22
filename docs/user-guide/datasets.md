@@ -1,16 +1,14 @@
 # Datasets
 
-Seven preprocessed single-cell perturbation datasets are available from a public GCS bucket:
+Seven preprocessed single-cell perturbation datasets are hosted in a
+[Requester Pays](https://cloud.google.com/storage/docs/requester-pays) Google Cloud Storage bucket:
 
 ```
 gs://scperteval/processed/
 ```
 
-Each file is also reachable over plain HTTPS:
-
-```
-https://storage.googleapis.com/scperteval/processed/<dataset>_processed_complete.h5ad
-```
+Data-transfer charges are billed to a Google Cloud project supplied by the requester. See
+[Downloading](#downloading) for prerequisites and commands.
 
 ## Available datasets
 
@@ -119,12 +117,42 @@ Whether a study evaluates combos, singles, or both is a downstream modelling cho
 
 ## Downloading
 
-```bash
-# single file
-gsutil cp gs://scperteval/processed/replogle22k562_processed_complete.h5ad .
+### Prerequisites
 
-# all files (parallel)
-gsutil -m cp gs://scperteval/processed/*_processed_complete.h5ad .
+1. A Google account.
+2. A Google Cloud project with billing enabled (see Google Cloud's guides on
+   [creating a project](https://cloud.google.com/resource-manager/docs/creating-managing-projects)
+   and [enabling billing](https://cloud.google.com/billing/docs/how-to/modify-project)).
+3. The [gcloud CLI](https://cloud.google.com/sdk/docs/install), authenticated via:
+
+   ```bash
+   gcloud auth login
+   ```
+
+Replace `YOUR_PROJECT_ID` in the commands below with your Google Cloud project ID (run
+`gcloud projects list` to list accessible projects).
+
+### Commands
+
+```bash
+# list available files
+gcloud storage ls --billing-project=YOUR_PROJECT_ID gs://scperteval/processed/
+
+# download a single file
+gcloud storage cp --billing-project=YOUR_PROJECT_ID gs://scperteval/processed/replogle22k562_processed_complete.h5ad .
+
+# download all files
+gcloud storage cp --billing-project=YOUR_PROJECT_ID "gs://scperteval/processed/*_processed_complete.h5ad" .
+```
+
+To download over authenticated HTTPS on macOS or Linux:
+
+```bash
+curl --fail -L \
+  -H "Authorization: Bearer $(gcloud auth print-access-token)" \
+  -H "x-goog-user-project: YOUR_PROJECT_ID" \
+  -o replogle22k562_processed_complete.h5ad \
+  https://storage.googleapis.com/scperteval/processed/replogle22k562_processed_complete.h5ad
 ```
 
 Then pass the path directly to the CLI:

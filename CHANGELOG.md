@@ -28,6 +28,9 @@
 
 ### Changed
 
+- Sample datasets in `gs://scperteval` now use Google Cloud Storage Requester Pays and require a
+  Google account and a billing-enabled Google Cloud project. See the
+  [download instructions](https://scperteval.readthedocs.io/en/latest/user-guide/datasets.html#downloading).
 - `Context._de_view()` now preserves signed `PerturbationDEResult` for both truth and candidate and
   applies `Protocol.space` to restrict the DE evaluation gene universe without altering biological
   DE labels (building on #39 by @psl-schaefer).
